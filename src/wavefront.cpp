@@ -257,12 +257,6 @@ void initLaunchParams(PathTracerState &state)
 
     state.params.samples_per_launch = samples_per_launch;
     state.params.subframe_index = 0u;
-
-    // state.params.light.emission = make_float3(15.0f, 12.8f, 7.18f) * 2;
-    // state.params.light.corner = make_float3(34.30f, 54.85f, 22.70f);
-    // state.params.light.v1 = make_float3(0.0f, 0.0f, 15.5f);
-    // state.params.light.v2 = make_float3(-15.0f, 0.0f, 0.0f);
-    // state.params.light.normal = normalize(cross(state.params.light.v1, state.params.light.v2));
     state.params.handle = state.gas_handle;
 
     CUDA_CHECK(cudaStreamCreate(&state.stream));
@@ -389,20 +383,6 @@ void createContext(PathTracerState &state)
 /// @param state 全程序状态配置
 void buildMeshAccel(PathTracerState &state)
 {
-    //
-    // copy mesh data to device
-    //
-    // // 将网格顶点数据复制到GPU内存
-    // const size_t vertices_size_in_bytes = g_vertices.size() * sizeof( Vertex );
-    // // 使用cudaMalloc申请一块大小为g_vertices的内存，然后将GPU内存指针指向state.d_vertices
-    // CUDA_CHECK( cudaMalloc( reinterpret_cast<void**>( &state.d_vertices ), vertices_size_in_bytes ) );
-    // // 使用cudaMemcpy将g_vertices的数据发送给d_vertices指向的GPU内存区域
-    // CUDA_CHECK( cudaMemcpy(
-    //             reinterpret_cast<void*>( state.d_vertices ),
-    //             g_vertices.data(), vertices_size_in_bytes,
-    //             cudaMemcpyHostToDevice
-    //             ) );
-
     // 多mesh的注意事项：
     // 需要使用多组 OptixBuildInput、多组 d_vertices 和多组 d_indices。
     state.d_vertices.resize(g_meshes.size());
@@ -452,43 +432,7 @@ void buildMeshAccel(PathTracerState &state)
         triangleInput.triangleArray.sbtIndexOffsetSizeInBytes = 0;
         triangleInput.triangleArray.sbtIndexOffsetStrideInBytes = 0;
     }
-
-    // // mat_indices是材质指针，建立三角形到材质的映射。
-    // // 事实上材质和着色器绑定表是强关联的。
-    // CUdeviceptr  d_mat_indices             = 0;
-    // const size_t mat_indices_size_in_bytes = g_mat_indices.size() * sizeof( uint32_t );
-    // CUDA_CHECK( cudaMalloc( reinterpret_cast<void**>( &d_mat_indices ), mat_indices_size_in_bytes ) );
-    // CUDA_CHECK( cudaMemcpy(
-    //             reinterpret_cast<void*>( d_mat_indices ),
-    //             g_mat_indices.data(),
-    //             mat_indices_size_in_bytes,
-    //             cudaMemcpyHostToDevice
-    //             ) );
-
-    // //
-    // // Build triangle GAS
-    // //
-    // // 着色器绑定表的flags。
-    // uint32_t triangle_input_flags[MAT_COUNT] =  // One per SBT record for this build input
-    // {
-    //     OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT,
-    //     OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT,
-    //     OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT,
-    //     OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT
-    // };
-
-    // OptixBuildInput triangle_input = {};
-    // triangle_input.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
-    // triangle_input.triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
-    // triangle_input.triangleArray.vertexStrideInBytes = sizeof(Vertex);
-    // triangle_input.triangleArray.numVertices = static_cast<uint32_t>(g_vertices.size());
-    // triangle_input.triangleArray.vertexBuffers = &state.d_vertices;
-    // triangle_input.triangleArray.flags = triangle_input_flags;
-    // triangle_input.triangleArray.numSbtRecords = MAT_COUNT;
-    // triangle_input.triangleArray.sbtIndexOffsetBuffer = d_mat_indices;
-    // triangle_input.triangleArray.sbtIndexOffsetSizeInBytes = sizeof(uint32_t);
-    // triangle_input.triangleArray.sbtIndexOffsetStrideInBytes = sizeof(uint32_t);
-
+    
     // 加速结构设置
     OptixAccelBuildOptions accel_options = {};
     accel_options.buildFlags = OPTIX_BUILD_FLAG_ALLOW_COMPACTION; // 这是加速结构压缩必须的第1个要求
