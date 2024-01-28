@@ -91,6 +91,7 @@ struct Record
 typedef Record<RayGenData> RayGenRecord;
 typedef Record<MissData> MissRecord;
 typedef Record<HitGroupData> HitGroupRecord;
+typedef Record<CallableData> CallableRecord;
 
 struct Vertex
 {
@@ -111,8 +112,8 @@ struct PathTracerState
 {
     OptixDeviceContext context = 0;
 
-    OptixTraversableHandle gas_handle = 0;             // Traversable handle for triangle AS
-    CUdeviceptr d_gas_output_buffer = {}; // Triangle AS memory
+    OptixTraversableHandle gas_handle = 0; // Traversable handle for triangle AS
+    CUdeviceptr d_gas_output_buffer = {};  // Triangle AS memory
     std::vector<CUdeviceptr> d_vertices = {};
     std::vector<CUdeviceptr> d_indices = {};
     std::vector<CUdeviceptr> d_normals = {};
@@ -131,6 +132,7 @@ struct PathTracerState
     OptixProgramGroup raygen_prog_group = 0;
     OptixProgramGroup radiance_miss_group = 0;
     OptixProgramGroup radiance_hit_group = 0;
+    OptixProgramGroup callable_test_group = 0;
 
     CUstream stream = 0;
     Params params;
@@ -432,7 +434,7 @@ void buildMeshAccel(PathTracerState &state)
         triangleInput.triangleArray.sbtIndexOffsetSizeInBytes = 0;
         triangleInput.triangleArray.sbtIndexOffsetStrideInBytes = 0;
     }
-    
+
     // 加速结构设置
     OptixAccelBuildOptions accel_options = {};
     accel_options.buildFlags = OPTIX_BUILD_FLAG_ALLOW_COMPACTION; // 这是加速结构压缩必须的第1个要求
@@ -528,6 +530,7 @@ void createModule(PathTracerState &state)
     state.pipeline_compile_options.numAttributeValues = 2;
     state.pipeline_compile_options.exceptionFlags = OPTIX_EXCEPTION_FLAG_NONE;
     state.pipeline_compile_options.pipelineLaunchParamsVariableName = "params";
+    state.pipeline_compile_options.usesPrimitiveTypeFlags = OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE; // 根据文档的指示，如果场景中只包含三角形，那么为了最佳性能，应该启用这个flag。
 
     size_t inputSize = 0;
     // 一个非常神奇的发现：这个程序的.cu文件似乎是动态加载的！（应该是加载了被nvcc编译后的结果）
@@ -563,6 +566,17 @@ void createModule(PathTracerState &state)
         inputSize,
         LOG, &LOG_SIZE,
         &state.ptx_closehit));
+
+    const char *input_test = sutil::getInputData(OPTIX_SAMPLE_NAME, OPTIX_SAMPLE_DIR, "test.cu", inputSize);
+
+    OPTIX_CHECK_LOG(optixModuleCreate(
+        state.context,
+        &module_compile_options,
+        &state.pipeline_compile_options,
+        input_test,
+        inputSize,
+        LOG, &LOG_SIZE,
+        &state.ptx_test));
 }
 
 /// @brief 创建程序组
@@ -611,6 +625,21 @@ void createProgramGroups(PathTracerState &state)
             LOG, &LOG_SIZE,
             &state.radiance_hit_group));
     }
+
+    // TODO: 根据optixProgramGroupCreate的参数可以猜测，传入的OptixProgramGroupDesc可以是一个数组。
+    {
+        OptixProgramGroupDesc callable_prog_group_desc = {};
+        callable_prog_group_desc.kind = OPTIX_PROGRAM_GROUP_KIND_CALLABLES;
+        callable_prog_group_desc.callables.moduleDC = state.ptx_test;
+        callable_prog_group_desc.callables.entryFunctionNameDC = "__direct_callable__test";
+        OPTIX_CHECK_LOG(optixProgramGroupCreate(
+            state.context,
+            &callable_prog_group_desc,
+            1, // num program groups
+            &program_group_options,
+            LOG, &LOG_SIZE,
+            &state.callable_test_group));
+    }
 }
 
 /// @brief 创建流水线
@@ -623,6 +652,7 @@ void createPipeline(PathTracerState &state)
             state.raygen_prog_group,
             state.radiance_miss_group,
             state.radiance_hit_group,
+            state.callable_test_group,
         };
 
     // 管线设置中，包含了最大追踪递归深度
@@ -645,6 +675,7 @@ void createPipeline(PathTracerState &state)
     OPTIX_CHECK(optixUtilAccumulateStackSizes(state.raygen_prog_group, &stack_sizes, state.pipeline));
     OPTIX_CHECK(optixUtilAccumulateStackSizes(state.radiance_miss_group, &stack_sizes, state.pipeline));
     OPTIX_CHECK(optixUtilAccumulateStackSizes(state.radiance_hit_group, &stack_sizes, state.pipeline));
+    OPTIX_CHECK(optixUtilAccumulateStackSizes(state.callable_test_group, &stack_sizes, state.pipeline));
 
     uint32_t max_trace_depth = 2;
     uint32_t max_cc_depth = 0;
@@ -677,12 +708,12 @@ void createTexture(PathTracerState &state)
     state.textureArrays.resize(numTextures);
     state.textureObjects.resize(numTextures);
 
-    for(int i = 0; i < numTextures; ++i)
+    for (int i = 0; i < numTextures; ++i)
     {
         auto texture = g_textures[i];
 
         cudaResourceDesc resDesc = {};
-        
+
         cudaChannelFormatDesc channel_desc;
         int32_t width = texture.resolution.x;
         int32_t height = texture.resolution.y;
@@ -718,18 +749,18 @@ void createTexture(PathTracerState &state)
 }
 
 /// @brief 创建光源采样表
-/// @param state 
+/// @param state
 void buildLightSampler(PathTracerState &state)
 {
     std::vector<Light> lights = {};
-    for(const auto &mesh : g_meshes)
+    for (const auto &mesh : g_meshes)
     {
-        if(length(mesh.emissive) < 1e-5f)
+        if (length(mesh.emissive) < 1e-5f)
         {
             continue;
         }
 
-        for(const int3 &triangleIndex : mesh.indices)
+        for (const int3 &triangleIndex : mesh.indices)
         {
             Light light = {};
             light.emission = mesh.emissive;
@@ -786,12 +817,12 @@ void createSBT(PathTracerState &state)
         hitgroup_record_size * g_meshes.size()));
 
     std::vector<HitGroupRecord> hitGroupRecords;
-    for(size_t i = 0; i < g_meshes.size(); ++i)
+    for (size_t i = 0; i < g_meshes.size(); ++i)
     {
         HitGroupRecord record;
         OPTIX_CHECK(optixSbtRecordPackHeader(state.radiance_hit_group, &record));
         // record.data.diffuse_color = {0.8f, 0.8f, 0.8f};
-        if(g_meshes[i].diffuseTextureID != -1)
+        if (g_meshes[i].diffuseTextureID != -1)
         {
             record.data.hasTexture = true;
             record.data.texture = state.textureObjects[g_meshes[i].diffuseTextureID];
@@ -801,14 +832,11 @@ void createSBT(PathTracerState &state)
             record.data.hasTexture = false;
             record.data.diffuse_color = g_meshes[i].diffuse;
         }
-
         record.data.emission_color = g_meshes[i].emissive;
-        
         record.data.vertices = reinterpret_cast<float3 *>(state.d_vertices[i]);
         record.data.indices = reinterpret_cast<int3 *>(state.d_indices[i]);
         record.data.normals = reinterpret_cast<float3 *>(state.d_normals[i]);
         record.data.texcoords = reinterpret_cast<float2 *>(state.d_texcoords[i]);
-
         hitGroupRecords.push_back(record);
     }
 
@@ -818,6 +846,27 @@ void createSBT(PathTracerState &state)
         hitgroup_record_size * g_meshes.size(),
         cudaMemcpyHostToDevice));
 
+    CUdeviceptr d_callable_records;
+    const size_t callable_record_size = sizeof(CallableRecord);
+    CUDA_CHECK(cudaMalloc(
+        reinterpret_cast<void **>(&d_callable_records),
+        hitgroup_record_size * 1
+    ));
+    std::vector<CallableRecord> callableRecords;
+    for(size_t i = 0; i < 1; ++i)
+    {
+        CallableRecord record;
+        OPTIX_CHECK(optixSbtRecordPackHeader(state.callable_test_group, &record));
+        callableRecords.push_back(record);
+    }
+
+    CUDA_CHECK(cudaMemcpy(
+        reinterpret_cast<void *>(d_callable_records),
+        callableRecords.data(),
+        callable_record_size * 1,
+        cudaMemcpyHostToDevice
+    ));
+
     state.sbt.raygenRecord = d_raygen_record;
     state.sbt.missRecordBase = d_miss_records;
     state.sbt.missRecordStrideInBytes = static_cast<uint32_t>(miss_record_size);
@@ -825,6 +874,9 @@ void createSBT(PathTracerState &state)
     state.sbt.hitgroupRecordBase = d_hitgroup_records;
     state.sbt.hitgroupRecordStrideInBytes = static_cast<uint32_t>(hitgroup_record_size);
     state.sbt.hitgroupRecordCount = 1;
+    state.sbt.callablesRecordBase = d_callable_records;
+    state.sbt.callablesRecordCount = 1;
+    state.sbt.callablesRecordStrideInBytes = static_cast<uint32_t>(callable_record_size);
 }
 
 void cleanupState(PathTracerState &state)

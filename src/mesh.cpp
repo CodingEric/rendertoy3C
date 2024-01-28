@@ -171,7 +171,17 @@ std::tuple<std::vector<Mesh>, std::vector<Texture>> loadOBJ(const std::string &p
                 mesh.diffuseTextureID = addTextureAndGetTextureId(materials[materialID].diffuse_texname, modelDir);
 
                 mesh.emissive = (const float3 &)materials[materialID].emission;
-                // TODO: emissive texture
+                mesh.emissiveTextureID = addTextureAndGetTextureId(materials[materialID].emissive_texname, modelDir);
+
+                mesh.roughness = (const float &)materials[materialID].roughness;
+                mesh.roughnessTextureID = addTextureAndGetTextureId(materials[materialID].roughness_texname, modelDir);
+
+                mesh.anisotropy = (const float &)materials[materialID].anisotropy;
+                mesh.ior = (const float &)materials[materialID].ior;
+                mesh.transmittance = (const float &)materials[materialID].transmittance;
+                mesh.normalTextureID = addTextureAndGetTextureId(materials[materialID].normal_texname, modelDir);
+
+                // mesh.roughness = materials[materialID].roughness;
             }
 
             if (!mesh.vertices.empty())

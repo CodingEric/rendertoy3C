@@ -26,7 +26,8 @@ extern "C" __global__ void __miss__radiance()
     MissData* rt_data  = reinterpret_cast<MissData*>( optixGetSbtDataPointer() );
     RadiancePRD prd = loadMissRadiancePRD();
 
-    prd.radiance  = make_float3( rt_data->bg_color );
+    // prd.radiance  = make_float3( rt_data->bg_color );
+    prd.radiance = optixDirectCall<float3>(0);
     prd.emitted   = make_float3( 0.f );
     prd.done      = true;
 

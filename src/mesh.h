@@ -24,6 +24,19 @@ struct Mesh
     int diffuseTextureID { -1 };
 
     float3 emissive { 0.0f, 0.0f, 0.0f };
+    int emissiveTextureID { -1 };
+
+    float roughness { 0.5f };
+    int roughnessTextureID { -1 };
+
+    float anisotropy { 0.0f };
+
+    float ior { 1.333f };
+
+    float transmittance { 0.0f };
+
+    int normalTextureID { -1 };
+    
 };
 
 struct Texture

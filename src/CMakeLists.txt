@@ -36,6 +36,8 @@ OPTIX_add_sample_executable( optixPathTracer target_name
 
   mesh.h
   mesh.cpp
+
+  shader/test.cu
   OPTIONS -rdc true
   )
 

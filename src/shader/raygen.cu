@@ -59,16 +59,6 @@ extern "C" __global__ void __raygen__rg()
             result += prd.radiance * last_attenuation;
             last_attenuation = prd.attenuation;
 
-            // if (isnan(prd.radiance.x) || isnan(prd.radiance.y) || isnan(prd.radiance.z))
-            // {
-            //     const uint3 launch_index = optixGetLaunchIndex();
-            //     const unsigned int image_index = launch_index.y * params.width + launch_index.x;
-            //     float3 accum_color = {1.0f, 0.0f, 0.0f};
-            //     params.accum_buffer[image_index] = make_float4(accum_color, 1.0f);
-            //     params.frame_buffer[image_index] = make_color(accum_color);
-            //     return;
-            // }
-
             const float p = dot(prd.attenuation, make_float3(0.30f, 0.59f, 0.11f));
             const bool done = prd.done || rnd(prd.seed) > p;
             if (done)

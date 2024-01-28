@@ -175,15 +175,9 @@ extern "C" __global__ void __closesthit__radiance()
                     weight = rt_data->diffuse_color;
                 }
                 weight *= powerHeuristic(pdf_light, pdf_scattering) * bsdf;
-                // weight *= powerHeuristic(pdf_light, pdf_scattering);
-                // weight *= pdf_light;
             }
         }
         prd.radiance = light_emission * weight;
-        // if(isnan(weight.x)||isnan(weight.y)||isnan(weight.z))
-        // {
-        //     prd.radiance = {1.0f, 0.0f, 0.0f};
-        // }
     }
     prd.done = false;
 

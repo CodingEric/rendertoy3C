@@ -121,3 +121,8 @@ struct HitGroupData
     cudaTextureObject_t texture;
 };
 
+struct CallableData
+{
+
+};
+
