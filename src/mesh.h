@@ -36,7 +36,6 @@ struct Mesh
     float transmittance { 0.0f };
 
     int normalTextureID { -1 };
-    
 };
 
 struct Texture

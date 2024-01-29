@@ -1,6 +1,8 @@
 #pragma once
 
 #include <optix.h>
+
+#include <src/light.h>
 #include "random.h"
 
 #include <sutil/vec_math.h>
@@ -65,15 +67,6 @@ const unsigned int radiancePayloadSemantics[19] =
     OPTIX_PAYLOAD_SEMANTICS_TRACE_CALLER_READ | OPTIX_PAYLOAD_SEMANTICS_CH_WRITE | OPTIX_PAYLOAD_SEMANTICS_MS_WRITE,
     // RadiancePRD::pdf_prev
     OPTIX_PAYLOAD_SEMANTICS_TRACE_CALLER_READ_WRITE | OPTIX_PAYLOAD_SEMANTICS_CH_READ_WRITE,
-};
-
-
-struct Light
-{
-    float3 v0, v1, v2;
-    float3 normal;
-    float area;
-    float3 emission;
 };
 
 

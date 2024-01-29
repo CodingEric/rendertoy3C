@@ -1,4 +1,5 @@
 #include "shader_common.h"
+#include <src/light.h>
 
 extern "C"
 {
@@ -8,32 +9,8 @@ extern "C"
 static __forceinline__ __device__ void SampleLights(const float3 &P, unsigned int &seed, float3 &light_pos, float3 &emission, float &pdf)
 {
     Light light = params.lights[int(rnd(seed) * params.light_count)];
-
-    const float u = rnd(seed);
-    const float v = rnd(seed);
-    float su0 = std::sqrt(u);
-    float b0 = 1.0f - su0;
-    float b1 = v * su0;
-    light_pos = b0 * light.v0 + b1 * light.v1 + (1.0f - b0 - b1) * light.v2;
-
-    float3 dist_vec = light_pos - P;
-    float dist2 = dot(dist_vec, dist_vec);
-    if(dist2 < 1e-5f)
-    {
-        emission = {0.0f, 0.0f, 0.0f};
-        pdf = 1.0f;
-        return;
-    }
-    float3 normalized_dist_vec = normalize(dist_vec);
-    float omega_light = abs(dot(normalized_dist_vec, light.normal)) * light.area / dist2;
-    if(omega_light < 1e-5f)
-    {
-        emission = {0.0f, 0.0f, 0.0f};
-        pdf = 1.0f;
-        return;
-    }
-    emission = light.emission * omega_light;
-    pdf = 1.0f / (omega_light * params.light_count);
+    light.Sample(P, seed, light_pos, emission, pdf);
+    pdf /= params.light_count;
 }
 
 static __forceinline__ __device__ RadiancePRD loadClosesthitRadiancePRD()

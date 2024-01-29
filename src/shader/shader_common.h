@@ -8,6 +8,8 @@
 
 #include "shader_data.h"
 
+#include <src/wavefront.h>
+
 
 //------------------------------------------------------------------------------
 //
@@ -17,7 +19,8 @@
 
 struct Onb
 {
-    __forceinline__ __device__ Onb(const float3 &normal)
+    WAVEFRONT_CPU_GPU
+    Onb(const float3 &normal)
     {
         m_normal = normal;
 
@@ -38,7 +41,8 @@ struct Onb
         m_tangent = cross(m_binormal, m_normal);
     }
 
-    __forceinline__ __device__ void inverse_transform(float3 &p) const
+    WAVEFRONT_CPU_GPU
+    void inverse_transform(float3 &p) const
     {
         p = p.x * m_tangent + p.y * m_binormal + p.z * m_normal;
     }
@@ -48,7 +52,8 @@ struct Onb
     float3 m_normal;
 };
 
-static __forceinline__ __device__ void cosine_sample_hemisphere(const float u1, const float u2, float3 &p)
+WAVEFRONT_CPU_GPU
+static void cosine_sample_hemisphere(const float u1, const float u2, float3 &p)
 {
     // Uniformly sample disk.
     const float r = sqrtf(u1);
@@ -59,7 +64,9 @@ static __forceinline__ __device__ void cosine_sample_hemisphere(const float u1, 
     // Project up to hemisphere.
     p.z = sqrtf(fmaxf(0.0f, 1.0f - p.x * p.x - p.y * p.y));
 }
-static __forceinline__ __device__ void traceRadiance(
+
+WAVEFRONT_GPU
+static void traceRadiance(
     OptixTraversableHandle handle,
     float3 ray_origin,
     float3 ray_direction,
@@ -115,7 +122,8 @@ static __forceinline__ __device__ void traceRadiance(
 }
 
 // Returns true if ray is occluded, else false
-static __forceinline__ __device__ bool traceOcclusion(
+WAVEFRONT_GPU
+static bool traceOcclusion(
     OptixTraversableHandle handle,
     float3 ray_origin,
     float3 ray_direction,
@@ -138,7 +146,8 @@ static __forceinline__ __device__ bool traceOcclusion(
     return optixHitObjectIsHit();
 }
 
-static __forceinline__ __device__ float powerHeuristic(
+WAVEFRONT_CPU_GPU
+static float powerHeuristic(
     const float &p1,
     const float &p2
 )
