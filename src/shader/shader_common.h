@@ -1,15 +1,8 @@
 #pragma once
 
-#include <optix.h>
-#include "random.h"
-
-#include <sutil/vec_math.h>
-#include <cuda/helpers.h>
-
-#include "shader_data.h"
-
 #include <src/wavefront.h>
-
+#include "random.h"
+#include "shader_data.h"
 
 //------------------------------------------------------------------------------
 //
@@ -52,20 +45,20 @@ struct Onb
     float3 m_normal;
 };
 
-WAVEFRONT_CPU_GPU
-static void cosine_sample_hemisphere(const float u1, const float u2, float3 &p)
-{
-    // Uniformly sample disk.
-    const float r = sqrtf(u1);
-    const float phi = 2.0f * M_PIf * u2;
-    p.x = r * cosf(phi);
-    p.y = r * sinf(phi);
+// WAVEFRONT_CPU_GPU
+// static void cosine_sample_hemisphere(const float u1, const float u2, float3 &p)
+// {
+//     // Uniformly sample disk.
+//     const float r = sqrtf(u1);
+//     const float phi = 2.0f * M_PIf * u2;
+//     p.x = r * cosf(phi);
+//     p.y = r * sinf(phi);
 
-    // Project up to hemisphere.
-    p.z = sqrtf(fmaxf(0.0f, 1.0f - p.x * p.x - p.y * p.y));
-}
+//     // Project up to hemisphere.
+//     p.z = sqrtf(fmaxf(0.0f, 1.0f - p.x * p.x - p.y * p.y));
+// }
 
-WAVEFRONT_GPU
+WAVEFRONT_GPU_INLINE
 static void traceRadiance(
     OptixTraversableHandle handle,
     float3 ray_origin,
@@ -122,7 +115,7 @@ static void traceRadiance(
 }
 
 // Returns true if ray is occluded, else false
-WAVEFRONT_GPU
+WAVEFRONT_GPU_INLINE
 static bool traceOcclusion(
     OptixTraversableHandle handle,
     float3 ray_origin,

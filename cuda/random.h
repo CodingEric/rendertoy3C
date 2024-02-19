@@ -66,6 +66,11 @@ static __host__ __device__ __inline__ float rnd(unsigned int &prev)
   return ((float) lcg(prev) / (float) 0x01000000);
 }
 
+static __host__ __device__ __inline__ float2 rnd2(unsigned int &prev)
+{
+  return make_float2(rnd(prev), rnd(prev));
+}
+
 static __host__ __device__ __inline__ unsigned int rot_seed( unsigned int seed, unsigned int frame )
 {
     return seed ^ frame;

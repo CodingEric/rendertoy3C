@@ -728,14 +728,14 @@ void buildLightSampler(PathTracerState &state)
     std::vector<Light> lights = {};
     for (const auto &mesh : g_meshes)
     {
-        if (length(mesh.emissive) < 1e-5f)
+        if (length(mesh.material.m_emissive) < 1e-5f)
         {
             continue;
         }
 
         for (const int3 &triangleIndex : mesh.indices)
         {
-            Light light = Light(mesh.emissive, mesh.vertices[triangleIndex.x], mesh.vertices[triangleIndex.y], mesh.vertices[triangleIndex.z]);
+            Light light = Light(mesh.material.m_emissive, mesh.vertices[triangleIndex.x], mesh.vertices[triangleIndex.y], mesh.vertices[triangleIndex.z]);
             lights.push_back(light);
         }
     }
@@ -788,17 +788,17 @@ void createSBT(PathTracerState &state)
         HitGroupRecord record;
         OPTIX_CHECK(optixSbtRecordPackHeader(state.radiance_hit_group, &record));
         // record.data.diffuse_color = {0.8f, 0.8f, 0.8f};
-        if (g_meshes[i].diffuseTextureID != -1)
+        if (g_meshes[i].material.m_diffuseTextureID != -1)
         {
             record.data.hasTexture = true;
-            record.data.texture = state.textureObjects[g_meshes[i].diffuseTextureID];
+            record.data.texture = state.textureObjects[g_meshes[i].material.m_diffuseTextureID];
         }
         else
         {
             record.data.hasTexture = false;
-            record.data.diffuse_color = g_meshes[i].diffuse;
+            record.data.diffuse_color = g_meshes[i].material.m_diffuse;
         }
-        record.data.emission_color = g_meshes[i].emissive;
+        record.data.emission_color = g_meshes[i].material.m_emissive;
         record.data.vertices = reinterpret_cast<float3 *>(state.d_vertices[i]);
         record.data.indices = reinterpret_cast<int3 *>(state.d_indices[i]);
         record.data.normals = reinterpret_cast<float3 *>(state.d_normals[i]);

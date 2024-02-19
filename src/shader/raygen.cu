@@ -1,4 +1,4 @@
-#include "shader_common.h"
+#include <src/shader/shader_common.h>
 
 extern "C"
 {

@@ -11,6 +11,10 @@ OPTIX_add_sample_executable( optixPathTracer target_name
   wavefront.h
   light.h
   material.h
+  bxdf.h
+  
+  util/sampling.h
+  util/math.h
 
   shader/test.cu
   OPTIONS -rdc true

@@ -1,5 +1,9 @@
 #define TINYOBJLOADER_IMPLEMENTATION
 
+#include <iostream>
+#include <algorithm>
+#include <set>
+
 #include <support/tinyobj/tiny_obj_loader.h>
 #include <support/stb/stb_image.h>
 #include "mesh.h"
@@ -167,21 +171,19 @@ std::tuple<std::vector<Mesh>, std::vector<Texture>> loadOBJ(const std::string &p
 
                 int3 idx{addVertexAndGetIndexInMesh(idx0), addVertexAndGetIndexInMesh(idx1), addVertexAndGetIndexInMesh(idx2)};
                 mesh.indices.push_back(idx);
-                mesh.diffuse = (const float3 &)materials[materialID].diffuse;
-                mesh.diffuseTextureID = addTextureAndGetTextureId(materials[materialID].diffuse_texname, modelDir);
+                mesh.material.m_diffuse = (const float3 &)materials[materialID].diffuse;
+                mesh.material.m_diffuseTextureID = addTextureAndGetTextureId(materials[materialID].diffuse_texname, modelDir);
 
-                mesh.emissive = (const float3 &)materials[materialID].emission;
-                mesh.emissiveTextureID = addTextureAndGetTextureId(materials[materialID].emissive_texname, modelDir);
+                mesh.material.m_emissive = (const float3 &)materials[materialID].emission;
+                mesh.material.m_emissiveTextureID = addTextureAndGetTextureId(materials[materialID].emissive_texname, modelDir);
 
-                mesh.roughness = (const float &)materials[materialID].roughness;
-                mesh.roughnessTextureID = addTextureAndGetTextureId(materials[materialID].roughness_texname, modelDir);
+                mesh.material.m_roughness = (const float &)materials[materialID].roughness;
+                mesh.material.m_roughnessTextureID = addTextureAndGetTextureId(materials[materialID].roughness_texname, modelDir);
 
-                mesh.anisotropy = (const float &)materials[materialID].anisotropy;
-                mesh.ior = (const float &)materials[materialID].ior;
-                mesh.transmittance = (const float &)materials[materialID].transmittance;
-                mesh.normalTextureID = addTextureAndGetTextureId(materials[materialID].normal_texname, modelDir);
-
-                // mesh.roughness = materials[materialID].roughness;
+                mesh.material.m_anisotropy = (const float &)materials[materialID].anisotropy;
+                mesh.material.m_ior = (const float &)materials[materialID].ior;
+                mesh.material.m_transmittance = (const float &)materials[materialID].transmittance;
+                mesh.material.m_normalTextureID = addTextureAndGetTextureId(materials[materialID].normal_texname, modelDir);
             }
 
             if (!mesh.vertices.empty())

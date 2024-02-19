@@ -1,5 +1,6 @@
-#include "shader_common.h"
+#include <src/shader/shader_common.h>
 #include <src/light.h>
+#include <src/util/sampling.h>
 
 extern "C"
 {
@@ -64,10 +65,8 @@ extern "C" __global__ void __closesthit__radiance()
 
     const int prim_idx = optixGetPrimitiveIndex();
     const float3 ray_dir = optixGetWorldRayDirection();
-
     const float u = optixGetTriangleBarycentrics().x;
     const float v = optixGetTriangleBarycentrics().y;
-
     const int3 index = rt_data->indices[prim_idx];
     float3 Ng = (1.0f - u - v) * rt_data->normals[index.x] + u * rt_data->normals[index.y] + v * rt_data->normals[index.z];
     Ng = normalize(Ng);
@@ -92,8 +91,7 @@ extern "C" __global__ void __closesthit__radiance()
         const float z1 = rnd(seed);
         const float z2 = rnd(seed);
 
-        float3 w_in;
-        cosine_sample_hemisphere(z1, z2, w_in);
+        float3 w_in = SampleCosineHemisphere(rnd2(seed));
         prd.pdf_prev = w_in.z / M_PI;
         Onb onb(Ns);
         onb.inverse_transform(w_in);

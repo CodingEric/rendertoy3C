@@ -1,4 +1,4 @@
-#include "shader_common.h"
+#include <src/shader/shader_common.h>
 
 static __forceinline__ __device__ RadiancePRD loadMissRadiancePRD()
 {

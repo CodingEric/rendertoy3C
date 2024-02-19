@@ -1,13 +1,8 @@
 #pragma once
 
-#include <optix.h>
-
+#include <src/wavefront.h>
 #include <src/light.h>
 #include "random.h"
-
-#include <sutil/vec_math.h>
-#include <cuda/helpers.h>
-#include <cuda_texture_types.h>
 
 //------------------------------------------------------------------------------
 //
