@@ -16,6 +16,9 @@ OPTIX_add_sample_executable( optixPathTracer target_name
   util/sampling.h
   util/math.h
 
+  gui/display.h
+  gui/display.cpp
+
   shader/test.cu
   OPTIONS -rdc true
   )

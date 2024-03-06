@@ -13,7 +13,6 @@
 #include <sutil/CUDAOutputBuffer.h>
 #include <sutil/Camera.h>
 #include <sutil/Exception.h>
-#include <sutil/GLDisplay.h>
 #include <sutil/Matrix.h>
 #include <sutil/Trackball.h>
 #include <sutil/sutil.h>
@@ -25,6 +24,7 @@
 #include "shader/shader_data.h"
 #include "mesh.h"
 #include "light.h"
+#include "gui/display.h"
 
 #include <array>
 #include <cstring>
@@ -298,7 +298,7 @@ void launchSubframe(sutil::CUDAOutputBuffer<uchar4> &output_buffer, PathTracerSt
     CUDA_SYNC_CHECK();
 }
 
-void displaySubframe(sutil::CUDAOutputBuffer<uchar4> &output_buffer, sutil::GLDisplay &gl_display, GLFWwindow *window)
+void displaySubframe(sutil::CUDAOutputBuffer<uchar4> &output_buffer, wavefront::GLDisplay &gl_display, GLFWwindow *window)
 {
     // Display
     int framebuf_res_x = 0; // The display's resolution (could be HDPI res)
@@ -970,7 +970,7 @@ int main(int argc, char *argv[])
                     state.params.height);
 
                 output_buffer.setStream(state.stream);
-                sutil::GLDisplay gl_display;
+                wavefront::GLDisplay gl_display;
 
                 std::chrono::duration<double> state_update_time(0.0);
                 std::chrono::duration<double> render_time(0.0);
