@@ -4,6 +4,8 @@
 #include <src/light.h>
 #include "random.h"
 
+namespace wavefront {
+
 //------------------------------------------------------------------------------
 //
 // Payload
@@ -114,3 +116,4 @@ struct CallableData
 
 };
 
+} // namespace wavefront

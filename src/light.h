@@ -3,6 +3,8 @@
 #include "wavefront.h"
 #include "random.h"
 
+namespace wavefront {
+
 enum class LightType
 {
     SurfaceLight,
@@ -27,7 +29,7 @@ struct Light
         m_normal = normalize(m_normal);
     }
 
-    WAVEFRONT_CPU_GPU
+    WAVEFRONT_GPU
     void Sample(const float3 &P, unsigned int &seed, float3 &light_pos, float3 &emission, float &pdf)
     {
         const float u = rnd(seed);
@@ -57,3 +59,5 @@ struct Light
         pdf = 1.0f / omega_light;
     }
 };
+
+} // namespace wavefront

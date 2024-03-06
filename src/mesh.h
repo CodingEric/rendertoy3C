@@ -7,6 +7,8 @@
 #include "wavefront.h"
 #include "material.h"
 
+namespace wavefront {
+
 struct Mesh
 {
     std::vector<float3> vertices;
@@ -24,3 +26,5 @@ struct Texture
 };
 
 std::tuple<std::vector<Mesh>, std::vector<Texture> > loadOBJ(const std::string &path);
+
+} // namespace wavefront

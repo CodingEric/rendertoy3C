@@ -32,7 +32,7 @@ struct Compare
     }
 };
 
-std::tuple<std::vector<Mesh>, std::vector<Texture>> loadOBJ(const std::string &path)
+std::tuple<std::vector<wavefront::Mesh>, std::vector<wavefront::Texture>> wavefront::loadOBJ(const std::string &path)
 {
     tinyobj::ObjReader reader;
     if (!reader.ParseFromFile(path))
@@ -53,8 +53,8 @@ std::tuple<std::vector<Mesh>, std::vector<Texture>> loadOBJ(const std::string &p
     auto &shapes = reader.GetShapes();
     auto &materials = reader.GetMaterials();
 
-    std::vector<Mesh> ret_mesh = {};
-    std::vector<Texture> ret_texture = {};
+    std::vector<wavefront::Mesh> ret_mesh = {};
+    std::vector<wavefront::Texture> ret_texture = {};
 
     for (const auto &shape : shapes)
     {
@@ -68,7 +68,7 @@ std::tuple<std::vector<Mesh>, std::vector<Texture>> loadOBJ(const std::string &p
         {
             std::map<tinyobj::index_t, int, Compare> knownVertices;
             std::map<std::string, int> knownTextures;
-            Mesh mesh = {};
+            wavefront::Mesh mesh = {};
 
             auto addVertexAndGetIndexInMesh = [&](tinyobj::index_t vertexIndexInOBJ) -> int
             {
@@ -129,7 +129,7 @@ std::tuple<std::vector<Mesh>, std::vector<Texture>> loadOBJ(const std::string &p
                 if (image)
                 {
                     textureID = ret_texture.size();
-                    Texture tex;
+                    wavefront::Texture tex;
                     tex.resolution = res;
                     tex.pixel.resize(res.x * res.y);
                     auto imagePixelView = (uint32_t *)image;

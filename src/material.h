@@ -2,6 +2,8 @@
 
 #include "wavefront.h"
 
+namespace wavefront {
+
 enum class MaterialType
 {
     Diffuse,
@@ -28,4 +30,11 @@ struct Material
     float m_transmittance{0.0f};
 
     int m_normalTextureID{-1};
+
+    // WAVEFRONT_GPU BSDF GetBSDF()
+    // {
+
+    // }
 };
+
+} // namespace wavefront

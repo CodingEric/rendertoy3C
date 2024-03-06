@@ -4,19 +4,19 @@
 
 extern "C"
 {
-    __constant__ Params params;
+    __constant__ wavefront::Params params;
 }
 
 static __forceinline__ __device__ void SampleLights(const float3 &P, unsigned int &seed, float3 &light_pos, float3 &emission, float &pdf)
 {
-    Light light = params.lights[int(rnd(seed) * params.light_count)];
+    wavefront::Light light = params.lights[int(rnd(seed) * params.light_count)];
     light.Sample(P, seed, light_pos, emission, pdf);
     pdf /= params.light_count;
 }
 
-static __forceinline__ __device__ RadiancePRD loadClosesthitRadiancePRD()
+static __forceinline__ __device__ wavefront::RadiancePRD loadClosesthitRadiancePRD()
 {
-    RadiancePRD prd = {};
+    wavefront::RadiancePRD prd = {};
 
     prd.attenuation.x = __uint_as_float(optixGetPayload_0());
     prd.attenuation.y = __uint_as_float(optixGetPayload_1());
@@ -27,7 +27,7 @@ static __forceinline__ __device__ RadiancePRD loadClosesthitRadiancePRD()
     return prd;
 }
 
-static __forceinline__ __device__ void storeClosesthitRadiancePRD(RadiancePRD prd)
+static __forceinline__ __device__ void storeClosesthitRadiancePRD(wavefront::RadiancePRD prd)
 {
     optixSetPayload_0(__float_as_uint(prd.attenuation.x));
     optixSetPayload_1(__float_as_uint(prd.attenuation.y));
@@ -59,9 +59,9 @@ static __forceinline__ __device__ void storeClosesthitRadiancePRD(RadiancePRD pr
 
 extern "C" __global__ void __closesthit__radiance()
 {
-    optixSetPayloadTypes(PAYLOAD_TYPE_RADIANCE);
+    optixSetPayloadTypes(wavefront::PAYLOAD_TYPE_RADIANCE);
 
-    HitGroupData *rt_data = (HitGroupData *)optixGetSbtDataPointer();
+    wavefront::HitGroupData *rt_data = (wavefront::HitGroupData *)optixGetSbtDataPointer();
 
     const int prim_idx = optixGetPrimitiveIndex();
     const float3 ray_dir = optixGetWorldRayDirection();
@@ -73,7 +73,7 @@ extern "C" __global__ void __closesthit__radiance()
     float2 texcoord = (1.0f - u - v) * rt_data->texcoords[index.x] + u * rt_data->texcoords[index.y] + v * rt_data->texcoords[index.z];
     const float3 Ns = faceforward(Ng, -ray_dir, Ng);
     const float3 P = optixGetWorldRayOrigin() + optixGetRayTmax() * ray_dir;
-    RadiancePRD prd = loadClosesthitRadiancePRD();
+    wavefront::RadiancePRD prd = loadClosesthitRadiancePRD();
 
     if (prd.depth == 0)
         prd.emitted = rt_data->emission_color;
@@ -91,9 +91,9 @@ extern "C" __global__ void __closesthit__radiance()
         const float z1 = rnd(seed);
         const float z2 = rnd(seed);
 
-        float3 w_in = SampleCosineHemisphere(rnd2(seed));
+        float3 w_in = wavefront::SampleCosineHemisphere(rnd2(seed));
         prd.pdf_prev = w_in.z / M_PI;
-        Onb onb(Ns);
+        wavefront::Onb onb(Ns);
         onb.inverse_transform(w_in);
         prd.direction = w_in;
         prd.origin = P;
@@ -130,11 +130,11 @@ extern "C" __global__ void __closesthit__radiance()
         if (nDl > 0.0f)
         {
             const bool occluded =
-                traceOcclusion(
+                wavefront::traceOcclusion(
                     params.handle,
                     P,
                     L,
-                    0.001f,          // tmin
+                    0.001f,         // tmin
                     Ldist - 0.01f); // tmax
 
             if (!occluded)
@@ -149,7 +149,7 @@ extern "C" __global__ void __closesthit__radiance()
                 {
                     weight = rt_data->diffuse_color;
                 }
-                weight *= powerHeuristic(pdf_light, pdf_scattering) * bsdf;
+                weight *= wavefront::powerHeuristic(pdf_light, pdf_scattering) * bsdf;
             }
         }
         prd.radiance = light_emission * weight;

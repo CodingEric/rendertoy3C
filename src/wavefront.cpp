@@ -61,10 +61,10 @@ struct Record
     T data;
 };
 
-typedef Record<RayGenData> RayGenRecord;
-typedef Record<MissData> MissRecord;
-typedef Record<HitGroupData> HitGroupRecord;
-typedef Record<CallableData> CallableRecord;
+typedef Record<wavefront::RayGenData> RayGenRecord;
+typedef Record<wavefront::MissData> MissRecord;
+typedef Record<wavefront::HitGroupData> HitGroupRecord;
+typedef Record<wavefront::CallableData> CallableRecord;
 
 struct Vertex
 {
@@ -108,8 +108,8 @@ struct PathTracerState
     OptixProgramGroup callable_test_group = 0;
 
     CUstream stream = 0;
-    Params params;
-    Params *d_params;
+    wavefront::Params params;
+    wavefront::Params *d_params;
 
     OptixShaderBindingTable sbt = {};
 };
@@ -120,8 +120,8 @@ struct PathTracerState
 //
 //------------------------------------------------------------------------------
 
-std::vector<Mesh> g_meshes;
-std::vector<Texture> g_textures;
+std::vector<wavefront::Mesh> g_meshes;
+std::vector<wavefront::Texture> g_textures;
 
 //------------------------------------------------------------------------------
 //
@@ -147,7 +147,7 @@ static void mouseButtonCallback(GLFWwindow *window, int button, int action, int 
 
 static void cursorPosCallback(GLFWwindow *window, double xpos, double ypos)
 {
-    Params *params = static_cast<Params *>(glfwGetWindowUserPointer(window));
+    wavefront::Params *params = static_cast<wavefront::Params *>(glfwGetWindowUserPointer(window));
 
     if (mouse_button == GLFW_MOUSE_BUTTON_LEFT)
     {
@@ -172,7 +172,7 @@ static void windowSizeCallback(GLFWwindow *window, int32_t res_x, int32_t res_y)
     // Output dimensions must be at least 1 in both x and y.
     sutil::ensureMinimumSize(res_x, res_y);
 
-    Params *params = static_cast<Params *>(glfwGetWindowUserPointer(window));
+    wavefront::Params *params = static_cast<wavefront::Params *>(glfwGetWindowUserPointer(window));
     params->width = res_x;
     params->height = res_y;
     camera_changed = true;
@@ -235,10 +235,10 @@ void initLaunchParams(PathTracerState &state)
     state.params.handle = state.gas_handle;
 
     CUDA_CHECK(cudaStreamCreate(&state.stream));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_params), sizeof(Params)));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_params), sizeof(wavefront::Params)));
 }
 
-void handleCameraUpdate(Params &params)
+void handleCameraUpdate(wavefront::Params &params)
 {
     if (!camera_changed)
         return;
@@ -249,7 +249,7 @@ void handleCameraUpdate(Params &params)
     camera.UVWFrame(params.U, params.V, params.W);
 }
 
-void handleResize(sutil::CUDAOutputBuffer<uchar4> &output_buffer, Params &params)
+void handleResize(sutil::CUDAOutputBuffer<uchar4> &output_buffer, wavefront::Params &params)
 {
     if (!resize_dirty)
         return;
@@ -264,7 +264,7 @@ void handleResize(sutil::CUDAOutputBuffer<uchar4> &output_buffer, Params &params
         params.width * params.height * sizeof(float4)));
 }
 
-void updateState(sutil::CUDAOutputBuffer<uchar4> &output_buffer, Params &params)
+void updateState(sutil::CUDAOutputBuffer<uchar4> &output_buffer, wavefront::Params &params)
 {
     // Update params on device
     if (camera_changed || resize_dirty)
@@ -281,14 +281,14 @@ void launchSubframe(sutil::CUDAOutputBuffer<uchar4> &output_buffer, PathTracerSt
     state.params.frame_buffer = result_buffer_data;
     CUDA_CHECK(cudaMemcpyAsync(
         reinterpret_cast<void *>(state.d_params),
-        &state.params, sizeof(Params),
+        &state.params, sizeof(wavefront::Params),
         cudaMemcpyHostToDevice, state.stream));
 
     OPTIX_CHECK(optixLaunch(
         state.pipeline,
         state.stream,
         reinterpret_cast<CUdeviceptr>(state.d_params),
-        sizeof(Params),
+        sizeof(wavefront::Params),
         &state.sbt,
         state.params.width,  // launch width
         state.params.height, // launch height
@@ -486,8 +486,8 @@ void createModule(PathTracerState &state)
     OptixPayloadType payloadType = {};
     // radiance prd
     // 辐照度payload，这里是文件结构
-    payloadType.numPayloadValues = sizeof(radiancePayloadSemantics) / sizeof(radiancePayloadSemantics[0]);
-    payloadType.payloadSemantics = radiancePayloadSemantics;
+    payloadType.numPayloadValues = sizeof(wavefront::radiancePayloadSemantics) / sizeof(wavefront::radiancePayloadSemantics[0]);
+    payloadType.payloadSemantics = wavefront::radiancePayloadSemantics;
 
     OptixModuleCompileOptions module_compile_options = {};
 #if !defined(NDEBUG)
@@ -725,7 +725,7 @@ void createTexture(PathTracerState &state)
 /// @param state
 void buildLightSampler(PathTracerState &state)
 {
-    std::vector<Light> lights = {};
+    std::vector<wavefront::Light> lights = {};
     for (const auto &mesh : g_meshes)
     {
         if (length(mesh.material.m_emissive) < 1e-5f)
@@ -735,14 +735,14 @@ void buildLightSampler(PathTracerState &state)
 
         for (const int3 &triangleIndex : mesh.indices)
         {
-            Light light = Light(mesh.material.m_emissive, mesh.vertices[triangleIndex.x], mesh.vertices[triangleIndex.y], mesh.vertices[triangleIndex.z]);
+            wavefront::Light light = wavefront::Light(mesh.material.m_emissive, mesh.vertices[triangleIndex.x], mesh.vertices[triangleIndex.y], mesh.vertices[triangleIndex.z]);
             lights.push_back(light);
         }
     }
 
     state.params.light_count = lights.size();
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.params.lights), lights.size() * sizeof(Light)));
-    CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.params.lights), lights.data(), lights.size() * sizeof(Light), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.params.lights), lights.size() * sizeof(wavefront::Light)));
+    CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.params.lights), lights.data(), lights.size() * sizeof(wavefront::Light), cudaMemcpyHostToDevice));
 }
 
 /// @brief 创建着色器绑定表，和材质强关联
@@ -764,7 +764,7 @@ void createSBT(PathTracerState &state)
 
     CUdeviceptr d_miss_records;
     const size_t miss_record_size = sizeof(MissRecord);
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_miss_records), miss_record_size * RAY_TYPE_COUNT));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_miss_records), miss_record_size * wavefront::RAY_TYPE_COUNT));
 
     MissRecord ms_sbt[1];
     OPTIX_CHECK(optixSbtRecordPackHeader(state.radiance_miss_group, &ms_sbt[0]));
@@ -773,7 +773,7 @@ void createSBT(PathTracerState &state)
     CUDA_CHECK(cudaMemcpy(
         reinterpret_cast<void *>(d_miss_records),
         ms_sbt,
-        miss_record_size * RAY_TYPE_COUNT,
+        miss_record_size * wavefront::RAY_TYPE_COUNT,
         cudaMemcpyHostToDevice));
 
     CUdeviceptr d_hitgroup_records;
@@ -836,7 +836,7 @@ void createSBT(PathTracerState &state)
     state.sbt.raygenRecord = d_raygen_record;
     state.sbt.missRecordBase = d_miss_records;
     state.sbt.missRecordStrideInBytes = static_cast<uint32_t>(miss_record_size);
-    state.sbt.missRecordCount = RAY_TYPE_COUNT;
+    state.sbt.missRecordCount = wavefront::RAY_TYPE_COUNT;
     state.sbt.hitgroupRecordBase = d_hitgroup_records;
     state.sbt.hitgroupRecordStrideInBytes = static_cast<uint32_t>(hitgroup_record_size);
     state.sbt.hitgroupRecordCount = 1;
@@ -929,7 +929,7 @@ int main(int argc, char *argv[])
         //
         // Set up OptiX state
         //
-        std::tie(g_meshes, g_textures) = loadOBJ("/home/tianyu/1.obj");
+        std::tie(g_meshes, g_textures) = wavefront::loadOBJ("/home/tianyu/1.obj");
 
         // 创建CUDA和OptiX上下文
         createContext(state);

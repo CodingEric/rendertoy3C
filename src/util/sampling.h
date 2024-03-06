@@ -3,6 +3,8 @@
 #include <src/wavefront.h>
 #include <src/util/math.h>
 
+namespace wavefront {
+
 WAVEFRONT_CPU_GPU_INLINE
 float2 SampleUniformDiskConcentric(float2 u) {
     // Map _u_ to $[-1,1]^2$ and handle degeneracy at the origin
@@ -38,3 +40,5 @@ WAVEFRONT_CPU_GPU_INLINE
 float SampleCosineHemispherePDF(float cosTheta) {
     return cosTheta * M_1_PIf;
 }
+
+} // namespace wavefront
