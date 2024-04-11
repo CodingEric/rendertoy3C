@@ -3,6 +3,7 @@
 #include <iostream>
 #include <algorithm>
 #include <set>
+#include <ranges>
 
 #include <support/tinyobj/tiny_obj_loader.h>
 #include <support/stb/stb_image.h>
@@ -32,26 +33,28 @@ struct Compare
     }
 };
 
-std::tuple<std::vector<wavefront::Mesh>, std::vector<wavefront::Texture>> wavefront::loadOBJ(const std::string &path)
+std::tuple<std::vector<wavefront::Mesh>, std::vector<wavefront::Texture>> wavefront::loadOBJ(const std::vector<std::string> &paths)
 {
-    tinyobj::ObjReader reader;
-    if (!reader.ParseFromFile(path))
+    const auto key_frames = paths.size();
+    std::vector<tinyobj::ObjReader> readers;
+    readers.resize(key_frames);
+    for (unsigned int i = 0; i < key_frames; ++i)
     {
-        if (!reader.Error().empty())
+        auto &reader = readers[i];
+        auto &path = paths[i];
+        if (!reader.ParseFromFile(path))
         {
-            std::cerr << "TinyObjReader: " << reader.Error();
+            if (!reader.Error().empty())
+                std::cerr << "TinyObjReader: " << reader.Error();
+            exit(1);
         }
-        exit(1);
+
+        if (!reader.Warning().empty())
+            std::cout << "TinyObjReader: " << reader.Warning();
     }
 
-    if (!reader.Warning().empty())
-    {
-        std::cout << "TinyObjReader: " << reader.Warning();
-    }
-
-    auto &attrib = reader.GetAttrib();
-    auto &shapes = reader.GetShapes();
-    auto &materials = reader.GetMaterials();
+    auto &shapes = readers[0].GetShapes();
+    auto &materials = readers[0].GetMaterials();
 
     std::vector<wavefront::Mesh> ret_mesh = {};
     std::vector<wavefront::Texture> ret_texture = {};
@@ -69,6 +72,9 @@ std::tuple<std::vector<wavefront::Mesh>, std::vector<wavefront::Texture>> wavefr
             std::map<tinyobj::index_t, int, Compare> knownVertices;
             std::map<std::string, int> knownTextures;
             wavefront::Mesh mesh = {};
+            mesh.vertices.resize(key_frames);
+            mesh.normals.resize(key_frames);
+            mesh.texcoords.resize(key_frames);
 
             auto addVertexAndGetIndexInMesh = [&](tinyobj::index_t vertexIndexInOBJ) -> int
             {
@@ -77,23 +83,26 @@ std::tuple<std::vector<wavefront::Mesh>, std::vector<wavefront::Texture>> wavefr
                     return knownVertices[vertexIndexInOBJ];
                 }
 
-                const float3 *vertex_array = (const float3 *)attrib.vertices.data();
-                const float3 *normal_array = (const float3 *)attrib.normals.data();
-                const float2 *texcoord_array = (const float2 *)attrib.texcoords.data();
-
-                int indexInMesh = mesh.vertices.size();
+                int indexInMesh = mesh.vertices[0].size();
                 knownVertices[vertexIndexInOBJ] = indexInMesh;
 
-                mesh.vertices.push_back(vertex_array[vertexIndexInOBJ.vertex_index]);
-                if (vertexIndexInOBJ.normal_index >= 0)
+                for (unsigned int i = 0; i < key_frames; ++i)
                 {
-                    while (mesh.normals.size() < mesh.vertices.size())
-                        mesh.normals.push_back(normal_array[vertexIndexInOBJ.normal_index]);
-                }
-                if (vertexIndexInOBJ.texcoord_index >= 0)
-                {
-                    while (mesh.texcoords.size() < mesh.vertices.size())
-                        mesh.texcoords.push_back(texcoord_array[vertexIndexInOBJ.texcoord_index]);
+                    auto &attrib = readers[i].GetAttrib();
+                    const float3 *vertex_array = (const float3 *)attrib.vertices.data();
+                    const float3 *normal_array = (const float3 *)attrib.normals.data();
+                    const float2 *texcoord_array = (const float2 *)attrib.texcoords.data();
+                    mesh.vertices[i].push_back(vertex_array[vertexIndexInOBJ.vertex_index]);
+                    if (vertexIndexInOBJ.normal_index >= 0)
+                    {
+                        while (mesh.normals[i].size() < mesh.vertices[i].size())
+                            mesh.normals[i].push_back(normal_array[vertexIndexInOBJ.normal_index]);
+                    }
+                    if (vertexIndexInOBJ.texcoord_index >= 0)
+                    {
+                        while (mesh.texcoords[i].size() < mesh.vertices[i].size())
+                            mesh.texcoords[i].push_back(texcoord_array[vertexIndexInOBJ.texcoord_index]);
+                    }
                 }
 
                 return indexInMesh;
@@ -133,7 +142,7 @@ std::tuple<std::vector<wavefront::Mesh>, std::vector<wavefront::Texture>> wavefr
                     tex.resolution = res;
                     tex.pixel.resize(res.x * res.y);
                     auto imagePixelView = (uint32_t *)image;
-                    for(int i = 0; i < res.x * res.y; ++i)
+                    for (int i = 0; i < res.x * res.y; ++i)
                     {
                         tex.pixel[i] = imagePixelView[i];
                     }
@@ -159,7 +168,7 @@ std::tuple<std::vector<wavefront::Mesh>, std::vector<wavefront::Texture>> wavefr
                 return textureID;
             };
 
-            const std::string modelDir = path.substr(0, path.rfind('/') + 1);
+            const std::string modelDir = paths[0].substr(0, paths[0].rfind('/') + 1);
 
             for (size_t faceID = 0; faceID < shape.mesh.material_ids.size(); ++faceID)
             {
@@ -171,6 +180,8 @@ std::tuple<std::vector<wavefront::Mesh>, std::vector<wavefront::Texture>> wavefr
 
                 int3 idx{addVertexAndGetIndexInMesh(idx0), addVertexAndGetIndexInMesh(idx1), addVertexAndGetIndexInMesh(idx2)};
                 mesh.indices.push_back(idx);
+
+                // TODO: handle null material.
                 mesh.material.m_diffuse = (const float3 &)materials[materialID].diffuse;
                 mesh.material.m_diffuseTextureID = addTextureAndGetTextureId(materials[materialID].diffuse_texname, modelDir);
 
@@ -186,7 +197,7 @@ std::tuple<std::vector<wavefront::Mesh>, std::vector<wavefront::Texture>> wavefr
                 mesh.material.m_normalTextureID = addTextureAndGetTextureId(materials[materialID].normal_texname, modelDir);
             }
 
-            if (!mesh.vertices.empty())
+            if (!mesh.vertices[0].empty())
             {
                 ret_mesh.push_back(mesh);
             }

@@ -371,29 +371,31 @@ void buildMeshAccel(PathTracerState &state)
     {
         const auto &mesh = g_meshes[i];
 
-        const size_t vertices_size_in_bytes = mesh.vertices.size() * sizeof(float3);
+        // 几何变形运动模糊：vertexBuffers存储的大小变为mesh.vertices.size() * NUM_KEYS。
+        const size_t vertices_size_in_bytes = mesh.vertices[0].size() * sizeof(float3);
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_vertices[i]), vertices_size_in_bytes));
-        CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.d_vertices[i]), mesh.vertices.data(), vertices_size_in_bytes, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.d_vertices[i]), mesh.vertices[0].data(), vertices_size_in_bytes, cudaMemcpyHostToDevice));
+        // 几何变形运动模糊：在这一部分之后创建一个CUDeviceptr数组，将上述申请的mesh.vertices.size() * NUM_KEYS内存空间分成若干个区块。然后将这个CUDeviceptr传入triangleArray.vertexBuffers。
 
         const size_t indices_size_in_bytes = mesh.indices.size() * sizeof(int3);
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_indices[i]), indices_size_in_bytes));
         CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.d_indices[i]), mesh.indices.data(), indices_size_in_bytes, cudaMemcpyHostToDevice));
 
-        const size_t normals_size_in_bytes = mesh.normals.size() * sizeof(float3);
+        const size_t normals_size_in_bytes = mesh.normals[0].size() * sizeof(float3);
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_normals[i]), normals_size_in_bytes));
-        CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.d_normals[i]), mesh.normals.data(), normals_size_in_bytes, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.d_normals[i]), mesh.normals[0].data(), normals_size_in_bytes, cudaMemcpyHostToDevice));
 
-        const size_t texcoords_size_in_bytes = mesh.texcoords.size() * sizeof(float2);
+        const size_t texcoords_size_in_bytes = mesh.texcoords[0].size() * sizeof(float2);
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_texcoords[i]), texcoords_size_in_bytes));
-        CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.d_texcoords[i]), mesh.texcoords.data(), texcoords_size_in_bytes, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.d_texcoords[i]), mesh.texcoords[0].data(), texcoords_size_in_bytes, cudaMemcpyHostToDevice));
 
         auto &triangleInput = triangleInputs[i];
         triangleInput.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
 
         triangleInput.triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
         triangleInput.triangleArray.vertexStrideInBytes = sizeof(float3);
-        triangleInput.triangleArray.numVertices = static_cast<uint32_t>(mesh.vertices.size());
-        triangleInput.triangleArray.vertexBuffers = &state.d_vertices[i];
+        triangleInput.triangleArray.numVertices = static_cast<uint32_t>(mesh.vertices[0].size());
+        triangleInput.triangleArray.vertexBuffers = &state.d_vertices[i]; // 几何变形运动模糊：vertexBuffers接受一个CUDeviceptr数组的指针。
 
         triangleInput.triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
         triangleInput.triangleArray.indexStrideInBytes = sizeof(int3);
@@ -735,7 +737,7 @@ void buildLightSampler(PathTracerState &state)
 
         for (const int3 &triangleIndex : mesh.indices)
         {
-            wavefront::Light light = wavefront::Light(mesh.material.m_emissive, mesh.vertices[triangleIndex.x], mesh.vertices[triangleIndex.y], mesh.vertices[triangleIndex.z]);
+            wavefront::Light light = wavefront::Light(mesh.material.m_emissive, mesh.vertices[0][triangleIndex.x], mesh.vertices[0][triangleIndex.y], mesh.vertices[0][triangleIndex.z]);
             lights.push_back(light);
         }
     }
@@ -921,15 +923,16 @@ int main(int argc, char *argv[])
         }
     }
 
-    try
-    {
+    // try
+    // {
         // 初始化摄像机参数，包括互动场景摄像机
         initCameraState();
 
         //
         // Set up OptiX state
         //
-        std::tie(g_meshes, g_textures) = wavefront::loadOBJ("/home/tianyu/1.obj");
+        std::tie(g_meshes, g_textures) = wavefront::loadOBJ({"/home/tianyu/1.obj"});
+        // std::tie(g_meshes, g_textures) = wavefront::loadOBJ({"/run/media/tianyu/hdd0-3d-wksp/testmodels/motion.obj"/*, "/run/media/tianyu/hdd0-3d-wksp/testmodels/motion0002.obj"*/});
 
         // 创建CUDA和OptiX上下文
         createContext(state);
@@ -1042,12 +1045,12 @@ int main(int argc, char *argv[])
         }
 
         cleanupState(state);
-    }
-    catch (std::exception &e)
-    {
-        std::cerr << "Caught exception: " << e.what() << "\n";
-        return 1;
-    }
+    // }
+    // catch (std::exception &e)
+    // {
+    //     std::cerr << "Caught exception: " << e.what() << "\n";
+    //     return 1;
+    // }
 
     return 0;
 }

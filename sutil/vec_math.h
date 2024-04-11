@@ -94,6 +94,7 @@ SUTIL_INLINE SUTIL_HOSTDEVICE unsigned long long min(unsigned long long a, unsig
 }
 
 
+#if defined(__CUDACC_RTC__)
 /** lerp */
 SUTIL_INLINE SUTIL_HOSTDEVICE float lerp(const float a, const float b, const float t)
 {
@@ -106,6 +107,20 @@ SUTIL_INLINE SUTIL_HOSTDEVICE float bilerp(const float x00, const float x10, con
 {
   return lerp( lerp( x00, x10, u ), lerp( x01, x11, u ), v );
 }
+#else
+/** lerp */
+SUTIL_INLINE SUTIL_HOSTDEVICE float lerp_(const float a, const float b, const float t)
+{
+  return a + t*(b-a);
+}
+
+/** bilerp */
+SUTIL_INLINE SUTIL_HOSTDEVICE float bilerp(const float x00, const float x10, const float x01, const float x11,
+                                         const float u, const float v)
+{
+  return lerp_( lerp_( x00, x10, u ), lerp_( x01, x11, u ), v );
+}
+#endif
 
 template <typename IntegerType>
 SUTIL_INLINE SUTIL_HOSTDEVICE IntegerType roundUp(IntegerType x, IntegerType y)
