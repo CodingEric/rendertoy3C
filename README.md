@@ -1,3 +1,3 @@
-# Wavefront
+# (WIP) rendertoy3C
 
-Wavefront is a GPU-accelerated path tracer.
+Path tracing playground with cuda/optix backend.
