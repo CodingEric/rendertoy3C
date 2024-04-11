@@ -931,7 +931,7 @@ int main(int argc, char *argv[])
         //
         // Set up OptiX state
         //
-        std::tie(g_meshes, g_textures) = wavefront::loadOBJ({"/home/tianyu/1.obj"});
+        std::tie(g_meshes, g_textures) = wavefront::loadOBJ({"/home/tianyu/1.obj", "/home/tianyu/2.obj"});
         // std::tie(g_meshes, g_textures) = wavefront::loadOBJ({"/run/media/tianyu/hdd0-3d-wksp/testmodels/motion.obj"/*, "/run/media/tianyu/hdd0-3d-wksp/testmodels/motion0002.obj"*/});
 
         // 创建CUDA和OptiX上下文
