@@ -11,6 +11,8 @@ namespace wavefront {
 
 struct Mesh
 {
+    unsigned int num_keys{1};
+
     std::vector<std::vector<float3>> vertices;
     std::vector<int3> indices;
     std::vector<std::vector<float3>> normals;

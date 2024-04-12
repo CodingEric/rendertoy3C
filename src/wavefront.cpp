@@ -382,8 +382,7 @@ void buildMeshAccel(PathTracerState &state)
         CUdeviceptr *vertices_per_key = new CUdeviceptr[2];
         for (unsigned int j = 0; j < 2; ++j)
         {
-            // vertices_per_key[j] = state.d_vertices[i] + j * mesh.vertices[0].size() * sizeof(float3);
-            vertices_per_key[j] = state.d_vertices[i] + j * per_keyframe_vertices_size_in_bytes; // + mesh.vertices[0].size() * sizeof(float3);
+            vertices_per_key[j] = state.d_vertices[i] + j * per_keyframe_vertices_size_in_bytes;
         }
 
         const size_t indices_size_in_bytes = mesh.indices.size() * sizeof(int3);
@@ -972,7 +971,7 @@ int main(int argc, char *argv[])
 
     if (outfile.empty())
     {
-        GLFWwindow *window = sutil::initUI("Project Wavefront", state.params.width, state.params.height);
+        GLFWwindow *window = sutil::initUI("rendertoy3c", state.params.width, state.params.height);
         glfwSetMouseButtonCallback(window, mouseButtonCallback);
         glfwSetCursorPosCallback(window, cursorPosCallback);
         glfwSetWindowSizeCallback(window, windowSizeCallback);
