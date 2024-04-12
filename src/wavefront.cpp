@@ -86,6 +86,7 @@ struct PathTracerState
     OptixDeviceContext context = 0;
 
     OptixTraversableHandle gas_handle = 0; // Traversable handle for triangle AS
+    OptixTraversableHandle gas_motion_handle = 0;
     CUdeviceptr d_gas_output_buffer = {};  // Triangle AS memory
     std::vector<CUdeviceptr> d_vertices = {};
     std::vector<CUdeviceptr> d_indices = {};
@@ -94,6 +95,8 @@ struct PathTracerState
 
     std::vector<cudaArray_t> textureArrays = {};
     std::vector<cudaTextureObject_t> textureObjects = {};
+
+    CUdeviceptr motion_transform = {};
 
     OptixModule ptx_module = 0;
     OptixModule ptx_miss_module = 0;
@@ -112,6 +115,10 @@ struct PathTracerState
     wavefront::Params *d_params;
 
     OptixShaderBindingTable sbt = {};
+
+    // 以下变量用于 Instance AS 的管理。
+    CUdeviceptr ias_output_buffer;
+    CUdeviceptr ias_handle;
 };
 
 //------------------------------------------------------------------------------
@@ -232,7 +239,7 @@ void initLaunchParams(PathTracerState &state)
 
     state.params.samples_per_launch = samples_per_launch;
     state.params.subframe_index = 0u;
-    state.params.handle = state.gas_handle;
+    state.params.handle = state.ias_handle;
 
     CUDA_CHECK(cudaStreamCreate(&state.stream));
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_params), sizeof(wavefront::Params)));
@@ -382,8 +389,7 @@ void buildMeshAccel(PathTracerState &state)
         CUdeviceptr *vertices_per_key = new CUdeviceptr[2];
         for (unsigned int j = 0; j < 2; ++j)
         {
-            // vertices_per_key[j] = state.d_vertices[i] + j * mesh.vertices[0].size() * sizeof(float3);
-            vertices_per_key[j] = state.d_vertices[i] + j * per_keyframe_vertices_size_in_bytes; // + mesh.vertices[0].size() * sizeof(float3);
+            vertices_per_key[j] = state.d_vertices[i] + j * per_keyframe_vertices_size_in_bytes;
         }
 
         const size_t indices_size_in_bytes = mesh.indices.size() * sizeof(int3);
@@ -499,7 +505,119 @@ void buildMeshAccel(PathTracerState &state)
     {
         state.d_gas_output_buffer = d_buffer_temp_output_gas_and_compacted_size;
     }
+
+    {
+        const float motion_matrix_keys[2][12] =
+            {
+                {1.0f, 0.0f, 0.0f, 0.0f,
+                 0.0f, 1.0f, 0.0f, 0.0f,
+                 0.0f, 0.0f, 1.0f, 0.0f},
+                {1.0f, 0.0f, 0.0f, 0.0f,
+                 0.0f, 1.0f, 0.0f, 0.5f,
+                 0.0f, 0.0f, 1.0f, 0.0f}};
+
+        OptixMatrixMotionTransform motion_transform = {};
+        motion_transform.child = state.gas_handle; // 这里需要拿到 GAS 的handle。
+        motion_transform.motionOptions.numKeys = 2;
+        motion_transform.motionOptions.timeBegin = 0.0f;
+        motion_transform.motionOptions.timeEnd = 1.0f;
+        motion_transform.motionOptions.flags = OPTIX_MOTION_FLAG_NONE;
+        memcpy(motion_transform.transform, motion_matrix_keys, 2 * 12 * sizeof(float));
+
+        CUDA_CHECK(cudaMalloc(
+            reinterpret_cast<void **>(&state.motion_transform),
+            sizeof(OptixMatrixMotionTransform)));
+
+        CUDA_CHECK(cudaMemcpy(
+            reinterpret_cast<void *>(state.motion_transform),
+            &motion_transform,
+            sizeof(OptixMatrixMotionTransform),
+            cudaMemcpyHostToDevice));
+
+        OPTIX_CHECK(optixConvertPointerToTraversableHandle(
+            state.context,
+            state.motion_transform,
+            OPTIX_TRAVERSABLE_TYPE_MATRIX_MOTION_TRANSFORM,
+            &state.gas_motion_handle)); // 运动模糊：这说明了几何级别变形需要 TLAS/BLAS才能工作，并且会生成一个独立于原有gas_handle的新motion_gas_handle。
+    }
 }
+
+void buildInstanceAccel( PathTracerState& state )
+{
+    Instance instance = { {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0 } }; // 4x3
+
+    const size_t instance_size_in_bytes = sizeof( OptixInstance ) * 1;
+    OptixInstance optix_instances[ 1 ];
+    memset( optix_instances, 0, instance_size_in_bytes );
+
+    optix_instances[0].flags             = OPTIX_INSTANCE_FLAG_NONE;
+    optix_instances[0].instanceId        = 1;
+    optix_instances[0].sbtOffset         = 0;
+    optix_instances[0].visibilityMask    = 1;
+    optix_instances[0].traversableHandle = state.gas_motion_handle;
+    memcpy( optix_instances[0].transform, instance.transform, sizeof( float ) * 12 );
+
+    CUdeviceptr  d_instances;
+    CUDA_CHECK( cudaMalloc( reinterpret_cast<void**>( &d_instances ), instance_size_in_bytes) );
+    CUDA_CHECK( cudaMemcpy(
+                reinterpret_cast<void*>( d_instances ),
+                optix_instances,
+                instance_size_in_bytes,
+                cudaMemcpyHostToDevice
+                ) );
+
+    OptixBuildInput instance_input = {};
+    instance_input.type                       = OPTIX_BUILD_INPUT_TYPE_INSTANCES;
+    instance_input.instanceArray.instances    = d_instances;
+    instance_input.instanceArray.numInstances = 1;
+
+    OptixAccelBuildOptions accel_options = {};
+    accel_options.buildFlags              = OPTIX_BUILD_FLAG_NONE;
+    accel_options.operation               = OPTIX_BUILD_OPERATION_BUILD;
+
+    accel_options.motionOptions.numKeys   = 2;
+    accel_options.motionOptions.timeBegin = 0.0f;
+    accel_options.motionOptions.timeEnd   = 1.0f;
+    accel_options.motionOptions.flags     = OPTIX_MOTION_FLAG_NONE;
+
+    OptixAccelBufferSizes ias_buffer_sizes;
+    OPTIX_CHECK( optixAccelComputeMemoryUsage(
+                state.context,
+                &accel_options,
+                &instance_input,
+                1, // num build inputs
+                &ias_buffer_sizes
+                ) );
+
+    CUdeviceptr d_temp_buffer;
+    CUDA_CHECK( cudaMalloc(
+                reinterpret_cast<void**>( &d_temp_buffer ),
+                ias_buffer_sizes.tempSizeInBytes
+                ) );
+    CUDA_CHECK( cudaMalloc(
+                reinterpret_cast<void**>( &state.ias_output_buffer ),
+                ias_buffer_sizes.outputSizeInBytes
+                ) );
+
+    OPTIX_CHECK( optixAccelBuild(
+                state.context,
+                0,                  // CUDA stream
+                &accel_options,
+                &instance_input,
+                1,                  // num build inputs
+                d_temp_buffer,
+                ias_buffer_sizes.tempSizeInBytes,
+                state.ias_output_buffer,
+                ias_buffer_sizes.outputSizeInBytes,
+                &state.ias_handle,
+                nullptr,            // emitted property list
+                0                   // num emitted properties
+                ) );
+
+    CUDA_CHECK( cudaFree( reinterpret_cast<void*>( d_temp_buffer ) ) );
+    CUDA_CHECK( cudaFree( reinterpret_cast<void*>( d_instances   ) ) );
+}
+
 
 /// @brief 使用含有各个pipeline的cu文件创建OptiX模块
 /// @param state
@@ -956,6 +1074,8 @@ int main(int argc, char *argv[])
     createContext(state);
     // 创建网格加速结构
     buildMeshAccel(state);
+    // 创建层次化实例加速结构
+    buildInstanceAccel(state);
     // 创建模块
     createModule(state);
     // 创建程序组
@@ -972,7 +1092,7 @@ int main(int argc, char *argv[])
 
     if (outfile.empty())
     {
-        GLFWwindow *window = sutil::initUI("Project Wavefront", state.params.width, state.params.height);
+        GLFWwindow *window = sutil::initUI("rendertoy3c", state.params.width, state.params.height);
         glfwSetMouseButtonCallback(window, mouseButtonCallback);
         glfwSetCursorPosCallback(window, cursorPosCallback);
         glfwSetWindowSizeCallback(window, windowSizeCallback);

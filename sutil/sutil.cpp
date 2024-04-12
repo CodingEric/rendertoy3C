@@ -752,7 +752,7 @@ void displayStats( std::chrono::duration<double>& state_update_time,
     if( cur_time - last_update_time > display_update_min_interval_time || total_subframe_count == 0 )
     {
         sprintf( display_text,
-                 "Interactive Window of Project Wavefront\n\n"
+                 "Interactive Window of rendertoy3c\n\n"
                  "%5.1f fps\n\n"
                  "state update: %8.1f ms\n"
                  "render      : %8.1f ms\n"
