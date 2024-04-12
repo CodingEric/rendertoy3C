@@ -371,29 +371,47 @@ void buildMeshAccel(PathTracerState &state)
     {
         const auto &mesh = g_meshes[i];
 
-        const size_t vertices_size_in_bytes = mesh.vertices.size() * sizeof(float3);
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_vertices[i]), vertices_size_in_bytes));
-        CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.d_vertices[i]), mesh.vertices.data(), vertices_size_in_bytes, cudaMemcpyHostToDevice));
+        // 几何变形运动模糊：vertexBuffers存储的大小变为mesh.vertices.size() * NUM_KEYS。
+        const size_t per_keyframe_vertices_size_in_bytes = mesh.vertices[0].size() * sizeof(float3);
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_vertices[i]), mesh.vertices.size() * per_keyframe_vertices_size_in_bytes));
+        for (unsigned int j = 0; j < 2; ++j)
+        {
+            CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.d_vertices[i] + j * per_keyframe_vertices_size_in_bytes), &mesh.vertices[j][0], per_keyframe_vertices_size_in_bytes, cudaMemcpyHostToDevice));
+        }
+        // 几何变形运动模糊：在这一部分之后创建一个CUDeviceptr数组，将上述申请的mesh.vertices.size() * NUM_KEYS内存空间分成若干个区块。然后将这个CUDeviceptr传入triangleArray.vertexBuffers。
+        CUdeviceptr *vertices_per_key = new CUdeviceptr[2];
+        for (unsigned int j = 0; j < 2; ++j)
+        {
+            // vertices_per_key[j] = state.d_vertices[i] + j * mesh.vertices[0].size() * sizeof(float3);
+            vertices_per_key[j] = state.d_vertices[i] + j * per_keyframe_vertices_size_in_bytes; // + mesh.vertices[0].size() * sizeof(float3);
+        }
 
         const size_t indices_size_in_bytes = mesh.indices.size() * sizeof(int3);
         CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_indices[i]), indices_size_in_bytes));
         CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.d_indices[i]), mesh.indices.data(), indices_size_in_bytes, cudaMemcpyHostToDevice));
 
-        const size_t normals_size_in_bytes = mesh.normals.size() * sizeof(float3);
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_normals[i]), normals_size_in_bytes));
-        CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.d_normals[i]), mesh.normals.data(), normals_size_in_bytes, cudaMemcpyHostToDevice));
+        const size_t per_keyframe_normals_size_in_bytes = mesh.normals[0].size() * sizeof(float3);
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_normals[i]), mesh.normals.size() * per_keyframe_normals_size_in_bytes));
+        for (unsigned int j = 0; j < 2; ++j)
+        {
+            CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.d_normals[i] + j * per_keyframe_normals_size_in_bytes), &mesh.normals[j][0], per_keyframe_normals_size_in_bytes, cudaMemcpyHostToDevice));
+        }
 
-        const size_t texcoords_size_in_bytes = mesh.texcoords.size() * sizeof(float2);
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_texcoords[i]), texcoords_size_in_bytes));
-        CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.d_texcoords[i]), mesh.texcoords.data(), texcoords_size_in_bytes, cudaMemcpyHostToDevice));
+        const size_t per_keyframe_texcoords_size_in_bytes = mesh.texcoords[0].size() * sizeof(float2);
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_texcoords[i]), mesh.texcoords.size() * per_keyframe_texcoords_size_in_bytes));
+        for (unsigned int j = 0; j < 2; ++j)
+        {
+            CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.d_texcoords[i] + j * per_keyframe_texcoords_size_in_bytes), &mesh.texcoords[j][0], per_keyframe_texcoords_size_in_bytes, cudaMemcpyHostToDevice));
+        }
 
         auto &triangleInput = triangleInputs[i];
         triangleInput.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
 
         triangleInput.triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
         triangleInput.triangleArray.vertexStrideInBytes = sizeof(float3);
-        triangleInput.triangleArray.numVertices = static_cast<uint32_t>(mesh.vertices.size());
-        triangleInput.triangleArray.vertexBuffers = &state.d_vertices[i];
+        triangleInput.triangleArray.numVertices = static_cast<uint32_t>(mesh.vertices[0].size());
+        // triangleInput.triangleArray.vertexBuffers = &state.d_vertices[i]; // 几何变形运动模糊：vertexBuffers接受一个CUDeviceptr数组的指针。
+        triangleInput.triangleArray.vertexBuffers = vertices_per_key;
 
         triangleInput.triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
         triangleInput.triangleArray.indexStrideInBytes = sizeof(int3);
@@ -412,6 +430,10 @@ void buildMeshAccel(PathTracerState &state)
     OptixAccelBuildOptions accel_options = {};
     accel_options.buildFlags = OPTIX_BUILD_FLAG_ALLOW_COMPACTION; // 这是加速结构压缩必须的第1个要求
     accel_options.operation = OPTIX_BUILD_OPERATION_BUILD;
+    accel_options.motionOptions.numKeys = 2;
+    accel_options.motionOptions.timeBegin = 0.0f;
+    accel_options.motionOptions.timeEnd = 1.0f;
+    accel_options.motionOptions.flags = OPTIX_MOTION_FLAG_NONE;
 
     // 计算加速结构在GPU上[将要]占用的显示内存大小。OptixAccelBufferSizes是一个结构体，内部含有三个参量。这里由于没有更新BVH，所以仅仅采用前两个变量。
     OptixAccelBufferSizes gas_buffer_sizes;
@@ -497,7 +519,7 @@ void createModule(PathTracerState &state)
     module_compile_options.numPayloadTypes = 1;
     module_compile_options.payloadTypes = &payloadType;
 
-    state.pipeline_compile_options.usesMotionBlur = false;
+    state.pipeline_compile_options.usesMotionBlur = true; // 运动模糊：需要将这个选项设置为true。
     state.pipeline_compile_options.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS;
     state.pipeline_compile_options.numPayloadValues = 0;
     state.pipeline_compile_options.numAttributeValues = 2;
@@ -735,7 +757,7 @@ void buildLightSampler(PathTracerState &state)
 
         for (const int3 &triangleIndex : mesh.indices)
         {
-            wavefront::Light light = wavefront::Light(mesh.material.m_emissive, mesh.vertices[triangleIndex.x], mesh.vertices[triangleIndex.y], mesh.vertices[triangleIndex.z]);
+            wavefront::Light light = wavefront::Light(mesh.material.m_emissive, mesh.vertices[0][triangleIndex.x], mesh.vertices[0][triangleIndex.y], mesh.vertices[0][triangleIndex.z]);
             lights.push_back(light);
         }
     }
@@ -816,10 +838,9 @@ void createSBT(PathTracerState &state)
     const size_t callable_record_size = sizeof(CallableRecord);
     CUDA_CHECK(cudaMalloc(
         reinterpret_cast<void **>(&d_callable_records),
-        hitgroup_record_size * 1
-    ));
+        hitgroup_record_size * 1));
     std::vector<CallableRecord> callableRecords;
-    for(size_t i = 0; i < 1; ++i)
+    for (size_t i = 0; i < 1; ++i)
     {
         CallableRecord record;
         OPTIX_CHECK(optixSbtRecordPackHeader(state.callable_test_group, &record));
@@ -830,8 +851,7 @@ void createSBT(PathTracerState &state)
         reinterpret_cast<void *>(d_callable_records),
         callableRecords.data(),
         callable_record_size * 1,
-        cudaMemcpyHostToDevice
-    ));
+        cudaMemcpyHostToDevice));
 
     state.sbt.raygenRecord = d_raygen_record;
     state.sbt.missRecordBase = d_miss_records;
@@ -921,133 +941,134 @@ int main(int argc, char *argv[])
         }
     }
 
-    try
+    // try
+    // {
+    // 初始化摄像机参数，包括互动场景摄像机
+    initCameraState();
+
+    //
+    // Set up OptiX state
+    //
+    std::tie(g_meshes, g_textures) = wavefront::loadOBJ({"/home/tianyu/1.obj", "/home/tianyu/2.obj"});
+    // std::tie(g_meshes, g_textures) = wavefront::loadOBJ({"/run/media/tianyu/hdd0-3d-wksp/testmodels/motion.obj"/*, "/run/media/tianyu/hdd0-3d-wksp/testmodels/motion0002.obj"*/});
+
+    // 创建CUDA和OptiX上下文
+    createContext(state);
+    // 创建网格加速结构
+    buildMeshAccel(state);
+    // 创建模块
+    createModule(state);
+    // 创建程序组
+    createProgramGroups(state);
+    createPipeline(state);
+    // 创建贴图
+    createTexture(state);
+    // 创建光源列表
+    buildLightSampler(state);
+    // 创建着色器绑定表
+    createSBT(state);
+
+    initLaunchParams(state);
+
+    if (outfile.empty())
     {
-        // 初始化摄像机参数，包括互动场景摄像机
-        initCameraState();
+        GLFWwindow *window = sutil::initUI("Project Wavefront", state.params.width, state.params.height);
+        glfwSetMouseButtonCallback(window, mouseButtonCallback);
+        glfwSetCursorPosCallback(window, cursorPosCallback);
+        glfwSetWindowSizeCallback(window, windowSizeCallback);
+        glfwSetWindowIconifyCallback(window, windowIconifyCallback);
+        glfwSetKeyCallback(window, keyCallback);
+        glfwSetScrollCallback(window, scrollCallback);
+        glfwSetWindowUserPointer(window, &state.params);
 
         //
-        // Set up OptiX state
+        // Render loop
         //
-        std::tie(g_meshes, g_textures) = wavefront::loadOBJ("/home/tianyu/1.obj");
-
-        // 创建CUDA和OptiX上下文
-        createContext(state);
-        // 创建网格加速结构
-        buildMeshAccel(state);
-        // 创建模块
-        createModule(state);
-        // 创建程序组
-        createProgramGroups(state);
-        createPipeline(state);
-        // 创建贴图
-        createTexture(state);
-        // 创建光源列表
-        buildLightSampler(state);
-        // 创建着色器绑定表
-        createSBT(state);
-
-        initLaunchParams(state);
-
-        if (outfile.empty())
         {
-            GLFWwindow *window = sutil::initUI("Project Wavefront", state.params.width, state.params.height);
-            glfwSetMouseButtonCallback(window, mouseButtonCallback);
-            glfwSetCursorPosCallback(window, cursorPosCallback);
-            glfwSetWindowSizeCallback(window, windowSizeCallback);
-            glfwSetWindowIconifyCallback(window, windowIconifyCallback);
-            glfwSetKeyCallback(window, keyCallback);
-            glfwSetScrollCallback(window, scrollCallback);
-            glfwSetWindowUserPointer(window, &state.params);
+            sutil::CUDAOutputBuffer<uchar4> output_buffer(
+                output_buffer_type,
+                state.params.width,
+                state.params.height);
 
-            //
-            // Render loop
-            //
+            output_buffer.setStream(state.stream);
+            wavefront::GLDisplay gl_display;
+
+            std::chrono::duration<double> state_update_time(0.0);
+            std::chrono::duration<double> render_time(0.0);
+            std::chrono::duration<double> display_time(0.0);
+
+            do
             {
-                sutil::CUDAOutputBuffer<uchar4> output_buffer(
-                    output_buffer_type,
-                    state.params.width,
-                    state.params.height);
+                auto t0 = std::chrono::steady_clock::now();
+                glfwPollEvents();
 
-                output_buffer.setStream(state.stream);
-                wavefront::GLDisplay gl_display;
+                updateState(output_buffer, state.params);
+                auto t1 = std::chrono::steady_clock::now();
+                state_update_time += t1 - t0;
+                t0 = t1;
 
-                std::chrono::duration<double> state_update_time(0.0);
-                std::chrono::duration<double> render_time(0.0);
-                std::chrono::duration<double> display_time(0.0);
-
-                do
-                {
-                    auto t0 = std::chrono::steady_clock::now();
-                    glfwPollEvents();
-
-                    updateState(output_buffer, state.params);
-                    auto t1 = std::chrono::steady_clock::now();
-                    state_update_time += t1 - t0;
-                    t0 = t1;
-
-                    launchSubframe(output_buffer, state);
-                    t1 = std::chrono::steady_clock::now();
-                    render_time += t1 - t0;
-                    t0 = t1;
-
-                    displaySubframe(output_buffer, gl_display, window);
-                    t1 = std::chrono::steady_clock::now();
-                    display_time += t1 - t0;
-
-                    sutil::displayStats(state_update_time, render_time, display_time);
-
-                    glfwSwapBuffers(window);
-
-                    ++state.params.subframe_index;
-                } while (!glfwWindowShouldClose(window));
-                CUDA_SYNC_CHECK();
-            }
-
-            sutil::cleanupUI(window);
-        }
-        else
-        {
-            if (output_buffer_type == sutil::CUDAOutputBufferType::GL_INTEROP)
-            {
-                sutil::initGLFW(); // For GL context
-                sutil::initGL();
-            }
-
-            {
-                // this scope is for output_buffer, to ensure the destructor is called bfore glfwTerminate()
-
-                sutil::CUDAOutputBuffer<uchar4> output_buffer(
-                    output_buffer_type,
-                    state.params.width,
-                    state.params.height);
-
-                handleCameraUpdate(state.params);
-                handleResize(output_buffer, state.params);
                 launchSubframe(output_buffer, state);
+                t1 = std::chrono::steady_clock::now();
+                render_time += t1 - t0;
+                t0 = t1;
 
-                sutil::ImageBuffer buffer;
-                buffer.data = output_buffer.getHostPointer();
-                buffer.width = output_buffer.width();
-                buffer.height = output_buffer.height();
-                buffer.pixel_format = sutil::BufferImageFormat::UNSIGNED_BYTE4;
+                displaySubframe(output_buffer, gl_display, window);
+                t1 = std::chrono::steady_clock::now();
+                display_time += t1 - t0;
 
-                sutil::saveImage(outfile.c_str(), buffer, false);
-            }
+                sutil::displayStats(state_update_time, render_time, display_time);
 
-            if (output_buffer_type == sutil::CUDAOutputBufferType::GL_INTEROP)
-            {
-                glfwTerminate();
-            }
+                glfwSwapBuffers(window);
+
+                ++state.params.subframe_index;
+            } while (!glfwWindowShouldClose(window));
+            CUDA_SYNC_CHECK();
         }
 
-        cleanupState(state);
+        sutil::cleanupUI(window);
     }
-    catch (std::exception &e)
+    else
     {
-        std::cerr << "Caught exception: " << e.what() << "\n";
-        return 1;
+        if (output_buffer_type == sutil::CUDAOutputBufferType::GL_INTEROP)
+        {
+            sutil::initGLFW(); // For GL context
+            sutil::initGL();
+        }
+
+        {
+            // this scope is for output_buffer, to ensure the destructor is called bfore glfwTerminate()
+
+            sutil::CUDAOutputBuffer<uchar4> output_buffer(
+                output_buffer_type,
+                state.params.width,
+                state.params.height);
+
+            handleCameraUpdate(state.params);
+            handleResize(output_buffer, state.params);
+            launchSubframe(output_buffer, state);
+
+            sutil::ImageBuffer buffer;
+            buffer.data = output_buffer.getHostPointer();
+            buffer.width = output_buffer.width();
+            buffer.height = output_buffer.height();
+            buffer.pixel_format = sutil::BufferImageFormat::UNSIGNED_BYTE4;
+
+            sutil::saveImage(outfile.c_str(), buffer, false);
+        }
+
+        if (output_buffer_type == sutil::CUDAOutputBufferType::GL_INTEROP)
+        {
+            glfwTerminate();
+        }
     }
+
+    cleanupState(state);
+    // }
+    // catch (std::exception &e)
+    // {
+    //     std::cerr << "Caught exception: " << e.what() << "\n";
+    //     return 1;
+    // }
 
     return 0;
 }
