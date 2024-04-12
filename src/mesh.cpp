@@ -199,6 +199,7 @@ std::tuple<std::vector<wavefront::Mesh>, std::vector<wavefront::Texture>> wavefr
 
             if (!mesh.vertices[0].empty())
             {
+                mesh.num_keys = key_frames;
                 ret_mesh.push_back(mesh);
             }
         }
