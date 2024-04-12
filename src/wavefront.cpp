@@ -972,7 +972,7 @@ int main(int argc, char *argv[])
 
     if (outfile.empty())
     {
-        GLFWwindow *window = sutil::initUI("Project Wavefront", state.params.width, state.params.height);
+        GLFWwindow *window = sutil::initUI("rendertoy3c", state.params.width, state.params.height);
         glfwSetMouseButtonCallback(window, mouseButtonCallback);
         glfwSetCursorPosCallback(window, cursorPosCallback);
         glfwSetWindowSizeCallback(window, windowSizeCallback);
