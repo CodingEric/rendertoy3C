@@ -135,7 +135,7 @@ extern "C" __global__ void __closesthit__radiance()
                     P,
                     L,
                     0.001f,         // tmin
-                    Ldist - 0.01f); // tmax
+                    Ldist - 0.01f, seed); // tmax
 
             if (!occluded)
             {

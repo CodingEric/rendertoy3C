@@ -61,6 +61,7 @@ static void traceRadiance(
     u0 = __float_as_uint(prd.attenuation.x);
     u1 = __float_as_uint(prd.attenuation.y);
     u2 = __float_as_uint(prd.attenuation.z);
+    float time = rnd(prd.seed);
     u3 = prd.seed;
     u4 = prd.depth;
     u18 = __float_as_uint(prd.pdf_prev);
@@ -77,7 +78,8 @@ static void traceRadiance(
         ray_direction,
         tmin,
         tmax,
-        0.0f, // rayTime
+        time, // rayTime
+        // 0.1f, 
         OptixVisibilityMask(1),
         OPTIX_RAY_FLAG_NONE,
         0,              // SBT offset
@@ -110,7 +112,8 @@ static bool traceOcclusion(
     float3 ray_origin,
     float3 ray_direction,
     float tmin,
-    float tmax)
+    float tmax,
+    unsigned int &seed)
 {
     // We are only casting probe rays so no shader invocation is needed
     optixTraverse(
@@ -118,7 +121,9 @@ static bool traceOcclusion(
         ray_origin,
         ray_direction,
         tmin,
-        tmax, 0.0f, // rayTime
+        tmax,
+        rnd(seed), // rayTime
+        // 0.0f, 
         OptixVisibilityMask(1),
         OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT | OPTIX_RAY_FLAG_DISABLE_ANYHIT,
         0,              // SBT offset
