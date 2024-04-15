@@ -11,10 +11,12 @@ namespace wavefront {
 
 struct Mesh
 {
-    std::vector<float3> vertices;
+    unsigned int num_keys{1};
+
+    std::vector<std::vector<float3>> vertices;
     std::vector<int3> indices;
-    std::vector<float3> normals;
-    std::vector<float2> texcoords;
+    std::vector<std::vector<float3>> normals;
+    std::vector<std::vector<float2>> texcoords;
 
     Material material;
 };
@@ -25,6 +27,6 @@ struct Texture
     int2 resolution { -1, -1 };
 };
 
-std::tuple<std::vector<Mesh>, std::vector<Texture> > loadOBJ(const std::string &path);
+std::tuple<std::vector<Mesh>, std::vector<Texture> > loadOBJ(const std::vector<std::string> &path);
 
 } // namespace wavefront
