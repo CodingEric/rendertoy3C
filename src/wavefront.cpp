@@ -239,7 +239,7 @@ void initLaunchParams(PathTracerState &state)
 
     state.params.samples_per_launch = samples_per_launch;
     state.params.subframe_index = 0u;
-    state.params.handle = state.gas_handle[0];
+    state.params.handle = state.ias_handle;
 
     CUDA_CHECK(cudaStreamCreate(&state.stream));
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_params), sizeof(wavefront::Params)));
@@ -376,8 +376,8 @@ void buildMeshAccel(PathTracerState &state)
     // std::vector<uint32_t> triangleInputFlags(g_meshes.size());
     // std::vector<OptixBuildInput> triangleInputs(g_meshes.size());
 
-    for (size_t i = 1; i < g_meshes.size(); ++i)
-    // for(size_t i = 1;;)
+    for (size_t i = 0; i < g_meshes.size(); ++i)
+    // for(;;)
     {
         const auto &mesh = g_meshes[i];
 
@@ -550,8 +550,8 @@ void buildInstanceAccel(PathTracerState &state)
 {
     Instance instance = {{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0}}; // 4x3
 
-    const size_t instance_size_in_bytes = sizeof(OptixInstance) * 1;
-    OptixInstance optix_instances[1];
+    const size_t instance_size_in_bytes = sizeof(OptixInstance) * 2;
+    OptixInstance optix_instances[2];
     memset(optix_instances, 0, instance_size_in_bytes);
 
     optix_instances[0].flags = OPTIX_INSTANCE_FLAG_NONE;
@@ -561,12 +561,12 @@ void buildInstanceAccel(PathTracerState &state)
     optix_instances[0].traversableHandle = state.gas_handle[0];
     memcpy(optix_instances[0].transform, instance.transform, sizeof(float) * 12);
 
-    // optix_instances[1].flags = OPTIX_INSTANCE_FLAG_NONE;
-    // optix_instances[1].instanceId = 1;
-    // optix_instances[1].sbtOffset = 0;
-    // optix_instances[1].visibilityMask = 1;
-    // optix_instances[1].traversableHandle = state.gas_handle[1];
-    // memcpy(optix_instances[1].transform, instance.transform, sizeof(float) * 12);
+    optix_instances[1].flags = OPTIX_INSTANCE_FLAG_NONE;
+    optix_instances[1].instanceId = 1;
+    optix_instances[1].sbtOffset = 0;
+    optix_instances[1].visibilityMask = 1;
+    optix_instances[1].traversableHandle = state.gas_handle[1];
+    memcpy(optix_instances[1].transform, instance.transform, sizeof(float) * 12);
 
     CUdeviceptr d_instances;
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_instances), instance_size_in_bytes));
@@ -579,7 +579,7 @@ void buildInstanceAccel(PathTracerState &state)
     OptixBuildInput instance_input = {};
     instance_input.type = OPTIX_BUILD_INPUT_TYPE_INSTANCES;
     instance_input.instanceArray.instances = d_instances;
-    instance_input.instanceArray.numInstances = 1;
+    instance_input.instanceArray.numInstances = 2;
 
     OptixAccelBuildOptions accel_options = {};
     accel_options.buildFlags = OPTIX_BUILD_FLAG_NONE;
@@ -929,6 +929,7 @@ void createSBT(PathTracerState &state)
         hitgroup_record_size * g_meshes.size()));
 
     std::vector<HitGroupRecord> hitGroupRecords;
+    hitGroupRecords.resize(g_meshes.size());
     for (size_t i = 0; i < g_meshes.size(); ++i)
     {
         HitGroupRecord record;
@@ -962,7 +963,7 @@ void createSBT(PathTracerState &state)
     const size_t callable_record_size = sizeof(CallableRecord);
     CUDA_CHECK(cudaMalloc(
         reinterpret_cast<void **>(&d_callable_records),
-        hitgroup_record_size * 1));
+        callable_record_size * 1));
     std::vector<CallableRecord> callableRecords;
     for (size_t i = 0; i < 1; ++i)
     {
@@ -983,7 +984,8 @@ void createSBT(PathTracerState &state)
     state.sbt.missRecordCount = wavefront::RAY_TYPE_COUNT;
     state.sbt.hitgroupRecordBase = d_hitgroup_records;
     state.sbt.hitgroupRecordStrideInBytes = static_cast<uint32_t>(hitgroup_record_size);
-    state.sbt.hitgroupRecordCount = 1;
+    state.sbt.hitgroupRecordCount = g_meshes.size();
+    // state.sbt.hitgroupRecordCount = 1;
     state.sbt.callablesRecordBase = d_callable_records;
     state.sbt.callablesRecordCount = 1;
     state.sbt.callablesRecordStrideInBytes = static_cast<uint32_t>(callable_record_size);
