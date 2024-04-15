@@ -983,7 +983,7 @@ void createSBT(PathTracerState &state)
     state.sbt.missRecordCount = wavefront::RAY_TYPE_COUNT;
     state.sbt.hitgroupRecordBase = d_hitgroup_records;
     state.sbt.hitgroupRecordStrideInBytes = static_cast<uint32_t>(hitgroup_record_size);
-    state.sbt.hitgroupRecordCount = 1;
+    state.sbt.hitgroupRecordCount = g_meshes.size();
     state.sbt.callablesRecordBase = d_callable_records;
     state.sbt.callablesRecordCount = 1;
     state.sbt.callablesRecordStrideInBytes = static_cast<uint32_t>(callable_record_size);
