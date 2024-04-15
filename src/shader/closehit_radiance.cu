@@ -81,7 +81,6 @@ extern "C" __global__ void __closesthit__radiance()
     {
         prd.emitted = make_float3(0.0f);
     }
-    prd.emitted = make_float3(1.0f);
 
     unsigned int seed = prd.seed;
 

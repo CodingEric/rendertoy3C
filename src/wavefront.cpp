@@ -549,37 +549,31 @@ void buildMeshAccel(PathTracerState &state)
 void buildInstanceAccel(PathTracerState &state)
 {
     Instance instance = {{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0}}; // 4x3
+    std::vector<OptixInstance> optix_instances(g_meshes.size());
+    const size_t instance_size_in_bytes = sizeof(OptixInstance);
 
-    const size_t instance_size_in_bytes = sizeof(OptixInstance) * 2;
-    OptixInstance optix_instances[2];
-    memset(optix_instances, 0, instance_size_in_bytes);
-
-    optix_instances[0].flags = OPTIX_INSTANCE_FLAG_NONE;
-    optix_instances[0].instanceId = 0;
-    optix_instances[0].sbtOffset = 0;
-    optix_instances[0].visibilityMask = 1;
-    optix_instances[0].traversableHandle = state.gas_handle[0];
-    memcpy(optix_instances[0].transform, instance.transform, sizeof(float) * 12);
-
-    optix_instances[1].flags = OPTIX_INSTANCE_FLAG_NONE;
-    optix_instances[1].instanceId = 1;
-    optix_instances[1].sbtOffset = 0;
-    optix_instances[1].visibilityMask = 1;
-    optix_instances[1].traversableHandle = state.gas_handle[1];
-    memcpy(optix_instances[1].transform, instance.transform, sizeof(float) * 12);
+    for(size_t i = 0; i < g_meshes.size(); ++i)
+    {
+        optix_instances[i].flags = OPTIX_INSTANCE_FLAG_NONE;
+        optix_instances[i].instanceId = 0;
+        optix_instances[i].sbtOffset = i;
+        optix_instances[i].visibilityMask = 1;
+        optix_instances[i].traversableHandle = state.gas_handle[i];
+        memcpy(optix_instances[i].transform, instance.transform, sizeof(float) * 12);
+    }
 
     CUdeviceptr d_instances;
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_instances), instance_size_in_bytes));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_instances), instance_size_in_bytes * g_meshes.size()));
     CUDA_CHECK(cudaMemcpy(
         reinterpret_cast<void *>(d_instances),
-        optix_instances,
-        instance_size_in_bytes,
+        optix_instances.data(),
+        instance_size_in_bytes * g_meshes.size(),
         cudaMemcpyHostToDevice));
 
     OptixBuildInput instance_input = {};
     instance_input.type = OPTIX_BUILD_INPUT_TYPE_INSTANCES;
     instance_input.instanceArray.instances = d_instances;
-    instance_input.instanceArray.numInstances = 2;
+    instance_input.instanceArray.numInstances = g_meshes.size();
 
     OptixAccelBuildOptions accel_options = {};
     accel_options.buildFlags = OPTIX_BUILD_FLAG_NONE;
@@ -929,7 +923,6 @@ void createSBT(PathTracerState &state)
         hitgroup_record_size * g_meshes.size()));
 
     std::vector<HitGroupRecord> hitGroupRecords;
-    hitGroupRecords.resize(g_meshes.size());
     for (size_t i = 0; i < g_meshes.size(); ++i)
     {
         HitGroupRecord record;
@@ -985,7 +978,6 @@ void createSBT(PathTracerState &state)
     state.sbt.hitgroupRecordBase = d_hitgroup_records;
     state.sbt.hitgroupRecordStrideInBytes = static_cast<uint32_t>(hitgroup_record_size);
     state.sbt.hitgroupRecordCount = g_meshes.size();
-    // state.sbt.hitgroupRecordCount = 1;
     state.sbt.callablesRecordBase = d_callable_records;
     state.sbt.callablesRecordCount = 1;
     state.sbt.callablesRecordStrideInBytes = static_cast<uint32_t>(callable_record_size);
