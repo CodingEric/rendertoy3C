@@ -85,9 +85,9 @@ struct PathTracerState
 {
     OptixDeviceContext context = 0;
 
-    OptixTraversableHandle gas_handle = 0; // Traversable handle for triangle AS
-    OptixTraversableHandle gas_motion_handle = 0;
-    CUdeviceptr d_gas_output_buffer = {};  // Triangle AS memory
+    std::vector<OptixTraversableHandle> gas_handle = {}; // Traversable handle for triangle AS
+    std::vector<OptixTraversableHandle> gas_motion_handle = {};
+    std::vector<CUdeviceptr> d_gas_output_buffer = {}; // Triangle AS memory
     std::vector<CUdeviceptr> d_vertices = {};
     std::vector<CUdeviceptr> d_indices = {};
     std::vector<CUdeviceptr> d_normals = {};
@@ -239,7 +239,7 @@ void initLaunchParams(PathTracerState &state)
 
     state.params.samples_per_launch = samples_per_launch;
     state.params.subframe_index = 0u;
-    state.params.handle = state.ias_handle;
+    state.params.handle = state.gas_handle[0];
 
     CUDA_CHECK(cudaStreamCreate(&state.stream));
     CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_params), sizeof(wavefront::Params)));
@@ -371,10 +371,13 @@ void buildMeshAccel(PathTracerState &state)
     state.d_indices.resize(g_meshes.size());
     state.d_normals.resize(g_meshes.size());
     state.d_texcoords.resize(g_meshes.size());
-    std::vector<uint32_t> triangleInputFlags(g_meshes.size());
-    std::vector<OptixBuildInput> triangleInputs(g_meshes.size());
+    state.gas_handle.resize(g_meshes.size());
+    state.d_gas_output_buffer.resize(g_meshes.size());
+    // std::vector<uint32_t> triangleInputFlags(g_meshes.size());
+    // std::vector<OptixBuildInput> triangleInputs(g_meshes.size());
 
-    for (size_t i = 0; i < g_meshes.size(); ++i)
+    for (size_t i = 1; i < g_meshes.size(); ++i)
+    // for(size_t i = 1;;)
     {
         const auto &mesh = g_meshes[i];
 
@@ -410,7 +413,7 @@ void buildMeshAccel(PathTracerState &state)
             CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.d_texcoords[i] + j * per_keyframe_texcoords_size_in_bytes), &mesh.texcoords[j][0], per_keyframe_texcoords_size_in_bytes, cudaMemcpyHostToDevice));
         }
 
-        auto &triangleInput = triangleInputs[i];
+        OptixBuildInput triangleInput{};
         triangleInput.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
 
         triangleInput.triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
@@ -424,200 +427,203 @@ void buildMeshAccel(PathTracerState &state)
         triangleInput.triangleArray.numIndexTriplets = (int)mesh.indices.size();
         triangleInput.triangleArray.indexBuffer = state.d_indices[i];
 
-        triangleInputFlags[i] = 0;
-        triangleInput.triangleArray.flags = &triangleInputFlags[i];
+        // triangleInputFlags[i] = 0;
+        uint32_t triangleInputFlag = 0;
+        triangleInput.triangleArray.flags = &triangleInputFlag;
         triangleInput.triangleArray.numSbtRecords = 1;
         triangleInput.triangleArray.sbtIndexOffsetBuffer = 0;
         triangleInput.triangleArray.sbtIndexOffsetSizeInBytes = 0;
         triangleInput.triangleArray.sbtIndexOffsetStrideInBytes = 0;
+
+        // 加速结构设置
+        OptixAccelBuildOptions accel_options = {};
+        accel_options.buildFlags = OPTIX_BUILD_FLAG_ALLOW_COMPACTION; // 这是加速结构压缩必须的第1个要求
+        accel_options.operation = OPTIX_BUILD_OPERATION_BUILD;
+        accel_options.motionOptions.numKeys = 2;
+        accel_options.motionOptions.timeBegin = 0.0f;
+        accel_options.motionOptions.timeEnd = 1.0f;
+        accel_options.motionOptions.flags = OPTIX_MOTION_FLAG_NONE;
+
+        // 计算加速结构在GPU上[将要]占用的显示内存大小。OptixAccelBufferSizes是一个结构体，内部含有三个参量。这里由于没有更新BVH，所以仅仅采用前两个变量。
+        OptixAccelBufferSizes gas_buffer_sizes;
+        OPTIX_CHECK(optixAccelComputeMemoryUsage(
+            state.context,
+            &accel_options,
+            &triangleInput,
+            1, // num_build_inputs
+            &gas_buffer_sizes));
+
+        // 在设备上申请临时存储空间。
+        CUdeviceptr d_temp_buffer;
+        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_temp_buffer), gas_buffer_sizes.tempSizeInBytes));
+
+        // non-compacted output
+        // 在设备上申请输出内存空间。
+        CUdeviceptr d_buffer_temp_output_gas_and_compacted_size;
+        size_t compactedSizeOffset = roundUp<size_t>(gas_buffer_sizes.outputSizeInBytes, 8ull);
+        CUDA_CHECK(cudaMalloc(
+            reinterpret_cast<void **>(&d_buffer_temp_output_gas_and_compacted_size),
+            compactedSizeOffset + 8));
+
+        // 配置加速结构构建器以支持大小压缩。
+        OptixAccelEmitDesc emitProperty = {};
+        emitProperty.type = OPTIX_PROPERTY_TYPE_COMPACTED_SIZE; // 这是加速结构压缩必须的第2个要求
+        emitProperty.result = (CUdeviceptr)((char *)d_buffer_temp_output_gas_and_compacted_size + compactedSizeOffset);
+
+        // 执行加速结构构建。
+        // 注意在这个构建过程中并没有对BVH进行压缩。
+        // 但是这一个过程会计算对BVH压缩以后的大小并且发射到emitProperty中。
+        OPTIX_CHECK(optixAccelBuild(
+            state.context,
+            0, // CUDA stream
+            &accel_options,
+            &triangleInput,
+            1, // num build inputs
+            d_temp_buffer,
+            gas_buffer_sizes.tempSizeInBytes,
+            d_buffer_temp_output_gas_and_compacted_size,
+            gas_buffer_sizes.outputSizeInBytes,
+            &state.gas_handle[i],
+            &emitProperty, // emitted property list
+            1              // num emitted properties
+            ));
+
+        CUDA_CHECK(cudaFree(reinterpret_cast<void *>(d_temp_buffer)));
+        // CUDA_CHECK(cudaFree(reinterpret_cast<void *>(d_mat_indices)));
+
+        size_t compacted_gas_size;
+        CUDA_CHECK(cudaMemcpy(&compacted_gas_size, (void *)emitProperty.result, sizeof(size_t), cudaMemcpyDeviceToHost));
+
+        // 这是技术手册要求的在CPU上执行的判断，因为BVH压缩过程可能在极端情况下导致结果变差。
+        if (compacted_gas_size < gas_buffer_sizes.outputSizeInBytes)
+        {
+            CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_gas_output_buffer[i]), compacted_gas_size));
+
+            // use handle as input and output
+            OPTIX_CHECK(optixAccelCompact(state.context, 0, state.gas_handle[i], state.d_gas_output_buffer[i], compacted_gas_size, &state.gas_handle[i]));
+
+            CUDA_CHECK(cudaFree((void *)d_buffer_temp_output_gas_and_compacted_size));
+        }
+        else
+        {
+            state.d_gas_output_buffer[i] = d_buffer_temp_output_gas_and_compacted_size;
+        }
+
+        // {
+        //     const float motion_matrix_keys[2][12] =
+        //         {
+        //             {1.0f, 0.0f, 0.0f, 0.0f,
+        //              0.0f, 1.0f, 0.0f, 0.0f,
+        //              0.0f, 0.0f, 1.0f, 0.0f},
+        //             {1.0f, 0.0f, 0.0f, 0.0f,
+        //              0.0f, 1.0f, 0.0f, 0.5f,
+        //              0.0f, 0.0f, 1.0f, 0.0f}};
+
+        //     OptixMatrixMotionTransform motion_transform = {};
+        //     motion_transform.child = state.gas_handle[i]; // 这里需要拿到 GAS 的handle。
+        //     motion_transform.motionOptions.numKeys = 2;
+        //     motion_transform.motionOptions.timeBegin = 0.0f;
+        //     motion_transform.motionOptions.timeEnd = 1.0f;
+        //     motion_transform.motionOptions.flags = OPTIX_MOTION_FLAG_NONE;
+        //     memcpy(motion_transform.transform, motion_matrix_keys, 2 * 12 * sizeof(float));
+
+        //     CUDA_CHECK(cudaMalloc(
+        //         reinterpret_cast<void **>(&state.motion_transform),
+        //         sizeof(OptixMatrixMotionTransform)));
+
+        //     CUDA_CHECK(cudaMemcpy(
+        //         reinterpret_cast<void *>(state.motion_transform),
+        //         &motion_transform,
+        //         sizeof(OptixMatrixMotionTransform),
+        //         cudaMemcpyHostToDevice));
+
+        //     OPTIX_CHECK(optixConvertPointerToTraversableHandle(
+        //         state.context,
+        //         state.motion_transform,
+        //         OPTIX_TRAVERSABLE_TYPE_MATRIX_MOTION_TRANSFORM,
+        //         &state.gas_motion_handle[i])); // 运动模糊：这说明了几何级别变形需要 TLAS/BLAS才能工作，并且会生成一个独立于原有gas_handle的新motion_gas_handle。
+        // }
     }
+}
 
-    // 加速结构设置
+void buildInstanceAccel(PathTracerState &state)
+{
+    Instance instance = {{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0}}; // 4x3
+
+    const size_t instance_size_in_bytes = sizeof(OptixInstance) * 1;
+    OptixInstance optix_instances[1];
+    memset(optix_instances, 0, instance_size_in_bytes);
+
+    optix_instances[0].flags = OPTIX_INSTANCE_FLAG_NONE;
+    optix_instances[0].instanceId = 0;
+    optix_instances[0].sbtOffset = 0;
+    optix_instances[0].visibilityMask = 1;
+    optix_instances[0].traversableHandle = state.gas_handle[0];
+    memcpy(optix_instances[0].transform, instance.transform, sizeof(float) * 12);
+
+    // optix_instances[1].flags = OPTIX_INSTANCE_FLAG_NONE;
+    // optix_instances[1].instanceId = 1;
+    // optix_instances[1].sbtOffset = 0;
+    // optix_instances[1].visibilityMask = 1;
+    // optix_instances[1].traversableHandle = state.gas_handle[1];
+    // memcpy(optix_instances[1].transform, instance.transform, sizeof(float) * 12);
+
+    CUdeviceptr d_instances;
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_instances), instance_size_in_bytes));
+    CUDA_CHECK(cudaMemcpy(
+        reinterpret_cast<void *>(d_instances),
+        optix_instances,
+        instance_size_in_bytes,
+        cudaMemcpyHostToDevice));
+
+    OptixBuildInput instance_input = {};
+    instance_input.type = OPTIX_BUILD_INPUT_TYPE_INSTANCES;
+    instance_input.instanceArray.instances = d_instances;
+    instance_input.instanceArray.numInstances = 1;
+
     OptixAccelBuildOptions accel_options = {};
-    accel_options.buildFlags = OPTIX_BUILD_FLAG_ALLOW_COMPACTION; // 这是加速结构压缩必须的第1个要求
+    accel_options.buildFlags = OPTIX_BUILD_FLAG_NONE;
     accel_options.operation = OPTIX_BUILD_OPERATION_BUILD;
-    accel_options.motionOptions.numKeys = 2;
-    accel_options.motionOptions.timeBegin = 0.0f;
-    accel_options.motionOptions.timeEnd = 1.0f;
-    accel_options.motionOptions.flags = OPTIX_MOTION_FLAG_NONE;
 
-    // 计算加速结构在GPU上[将要]占用的显示内存大小。OptixAccelBufferSizes是一个结构体，内部含有三个参量。这里由于没有更新BVH，所以仅仅采用前两个变量。
-    OptixAccelBufferSizes gas_buffer_sizes;
+    // accel_options.motionOptions.numKeys   = 2;
+    // accel_options.motionOptions.timeBegin = 0.0f;
+    // accel_options.motionOptions.timeEnd   = 1.0f;
+    // accel_options.motionOptions.flags     = OPTIX_MOTION_FLAG_NONE;
+
+    OptixAccelBufferSizes ias_buffer_sizes;
     OPTIX_CHECK(optixAccelComputeMemoryUsage(
         state.context,
         &accel_options,
-        triangleInputs.data(),
-        (int)triangleInputs.size(), // num_build_inputs
-        &gas_buffer_sizes));
+        &instance_input,
+        1, // num build inputs
+        &ias_buffer_sizes));
 
-    // 在设备上申请临时存储空间。
     CUdeviceptr d_temp_buffer;
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_temp_buffer), gas_buffer_sizes.tempSizeInBytes));
-
-    // non-compacted output
-    // 在设备上申请输出内存空间。
-    CUdeviceptr d_buffer_temp_output_gas_and_compacted_size;
-    size_t compactedSizeOffset = roundUp<size_t>(gas_buffer_sizes.outputSizeInBytes, 8ull);
     CUDA_CHECK(cudaMalloc(
-        reinterpret_cast<void **>(&d_buffer_temp_output_gas_and_compacted_size),
-        compactedSizeOffset + 8));
+        reinterpret_cast<void **>(&d_temp_buffer),
+        ias_buffer_sizes.tempSizeInBytes));
+    CUDA_CHECK(cudaMalloc(
+        reinterpret_cast<void **>(&state.ias_output_buffer),
+        ias_buffer_sizes.outputSizeInBytes));
 
-    // 配置加速结构构建器以支持大小压缩。
-    OptixAccelEmitDesc emitProperty = {};
-    emitProperty.type = OPTIX_PROPERTY_TYPE_COMPACTED_SIZE; // 这是加速结构压缩必须的第2个要求
-    emitProperty.result = (CUdeviceptr)((char *)d_buffer_temp_output_gas_and_compacted_size + compactedSizeOffset);
-
-    // 执行加速结构构建。
-    // 注意在这个构建过程中并没有对BVH进行压缩。
-    // 但是这一个过程会计算对BVH压缩以后的大小并且发射到emitProperty中。
     OPTIX_CHECK(optixAccelBuild(
         state.context,
         0, // CUDA stream
         &accel_options,
-        triangleInputs.data(),
-        (int)triangleInputs.size(), // num build inputs
+        &instance_input,
+        1, // num build inputs
         d_temp_buffer,
-        gas_buffer_sizes.tempSizeInBytes,
-        d_buffer_temp_output_gas_and_compacted_size,
-        gas_buffer_sizes.outputSizeInBytes,
-        &state.gas_handle,
-        &emitProperty, // emitted property list
-        1              // num emitted properties
+        ias_buffer_sizes.tempSizeInBytes,
+        state.ias_output_buffer,
+        ias_buffer_sizes.outputSizeInBytes,
+        &state.ias_handle,
+        nullptr, // emitted property list
+        0        // num emitted properties
         ));
 
     CUDA_CHECK(cudaFree(reinterpret_cast<void *>(d_temp_buffer)));
-    // CUDA_CHECK(cudaFree(reinterpret_cast<void *>(d_mat_indices)));
-
-    size_t compacted_gas_size;
-    CUDA_CHECK(cudaMemcpy(&compacted_gas_size, (void *)emitProperty.result, sizeof(size_t), cudaMemcpyDeviceToHost));
-
-    // 这是技术手册要求的在CPU上执行的判断，因为BVH压缩过程可能在极端情况下导致结果变差。
-    if (compacted_gas_size < gas_buffer_sizes.outputSizeInBytes)
-    {
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_gas_output_buffer), compacted_gas_size));
-
-        // use handle as input and output
-        OPTIX_CHECK(optixAccelCompact(state.context, 0, state.gas_handle, state.d_gas_output_buffer, compacted_gas_size, &state.gas_handle));
-
-        CUDA_CHECK(cudaFree((void *)d_buffer_temp_output_gas_and_compacted_size));
-    }
-    else
-    {
-        state.d_gas_output_buffer = d_buffer_temp_output_gas_and_compacted_size;
-    }
-
-    {
-        const float motion_matrix_keys[2][12] =
-            {
-                {1.0f, 0.0f, 0.0f, 0.0f,
-                 0.0f, 1.0f, 0.0f, 0.0f,
-                 0.0f, 0.0f, 1.0f, 0.0f},
-                {1.0f, 0.0f, 0.0f, 0.0f,
-                 0.0f, 1.0f, 0.0f, 0.5f,
-                 0.0f, 0.0f, 1.0f, 0.0f}};
-
-        OptixMatrixMotionTransform motion_transform = {};
-        motion_transform.child = state.gas_handle; // 这里需要拿到 GAS 的handle。
-        motion_transform.motionOptions.numKeys = 2;
-        motion_transform.motionOptions.timeBegin = 0.0f;
-        motion_transform.motionOptions.timeEnd = 1.0f;
-        motion_transform.motionOptions.flags = OPTIX_MOTION_FLAG_NONE;
-        memcpy(motion_transform.transform, motion_matrix_keys, 2 * 12 * sizeof(float));
-
-        CUDA_CHECK(cudaMalloc(
-            reinterpret_cast<void **>(&state.motion_transform),
-            sizeof(OptixMatrixMotionTransform)));
-
-        CUDA_CHECK(cudaMemcpy(
-            reinterpret_cast<void *>(state.motion_transform),
-            &motion_transform,
-            sizeof(OptixMatrixMotionTransform),
-            cudaMemcpyHostToDevice));
-
-        OPTIX_CHECK(optixConvertPointerToTraversableHandle(
-            state.context,
-            state.motion_transform,
-            OPTIX_TRAVERSABLE_TYPE_MATRIX_MOTION_TRANSFORM,
-            &state.gas_motion_handle)); // 运动模糊：这说明了几何级别变形需要 TLAS/BLAS才能工作，并且会生成一个独立于原有gas_handle的新motion_gas_handle。
-    }
+    CUDA_CHECK(cudaFree(reinterpret_cast<void *>(d_instances)));
 }
-
-void buildInstanceAccel( PathTracerState& state )
-{
-    Instance instance = { {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0 } }; // 4x3
-
-    const size_t instance_size_in_bytes = sizeof( OptixInstance ) * 1;
-    OptixInstance optix_instances[ 1 ];
-    memset( optix_instances, 0, instance_size_in_bytes );
-
-    optix_instances[0].flags             = OPTIX_INSTANCE_FLAG_NONE;
-    optix_instances[0].instanceId        = 1;
-    optix_instances[0].sbtOffset         = 0;
-    optix_instances[0].visibilityMask    = 1;
-    optix_instances[0].traversableHandle = state.gas_motion_handle;
-    memcpy( optix_instances[0].transform, instance.transform, sizeof( float ) * 12 );
-
-    CUdeviceptr  d_instances;
-    CUDA_CHECK( cudaMalloc( reinterpret_cast<void**>( &d_instances ), instance_size_in_bytes) );
-    CUDA_CHECK( cudaMemcpy(
-                reinterpret_cast<void*>( d_instances ),
-                optix_instances,
-                instance_size_in_bytes,
-                cudaMemcpyHostToDevice
-                ) );
-
-    OptixBuildInput instance_input = {};
-    instance_input.type                       = OPTIX_BUILD_INPUT_TYPE_INSTANCES;
-    instance_input.instanceArray.instances    = d_instances;
-    instance_input.instanceArray.numInstances = 1;
-
-    OptixAccelBuildOptions accel_options = {};
-    accel_options.buildFlags              = OPTIX_BUILD_FLAG_NONE;
-    accel_options.operation               = OPTIX_BUILD_OPERATION_BUILD;
-
-    accel_options.motionOptions.numKeys   = 2;
-    accel_options.motionOptions.timeBegin = 0.0f;
-    accel_options.motionOptions.timeEnd   = 1.0f;
-    accel_options.motionOptions.flags     = OPTIX_MOTION_FLAG_NONE;
-
-    OptixAccelBufferSizes ias_buffer_sizes;
-    OPTIX_CHECK( optixAccelComputeMemoryUsage(
-                state.context,
-                &accel_options,
-                &instance_input,
-                1, // num build inputs
-                &ias_buffer_sizes
-                ) );
-
-    CUdeviceptr d_temp_buffer;
-    CUDA_CHECK( cudaMalloc(
-                reinterpret_cast<void**>( &d_temp_buffer ),
-                ias_buffer_sizes.tempSizeInBytes
-                ) );
-    CUDA_CHECK( cudaMalloc(
-                reinterpret_cast<void**>( &state.ias_output_buffer ),
-                ias_buffer_sizes.outputSizeInBytes
-                ) );
-
-    OPTIX_CHECK( optixAccelBuild(
-                state.context,
-                0,                  // CUDA stream
-                &accel_options,
-                &instance_input,
-                1,                  // num build inputs
-                d_temp_buffer,
-                ias_buffer_sizes.tempSizeInBytes,
-                state.ias_output_buffer,
-                ias_buffer_sizes.outputSizeInBytes,
-                &state.ias_handle,
-                nullptr,            // emitted property list
-                0                   // num emitted properties
-                ) );
-
-    CUDA_CHECK( cudaFree( reinterpret_cast<void*>( d_temp_buffer ) ) );
-    CUDA_CHECK( cudaFree( reinterpret_cast<void*>( d_instances   ) ) );
-}
-
 
 /// @brief 使用含有各个pipeline的cu文件创建OptiX模块
 /// @param state
@@ -638,7 +644,7 @@ void createModule(PathTracerState &state)
     module_compile_options.payloadTypes = &payloadType;
 
     state.pipeline_compile_options.usesMotionBlur = true; // 运动模糊：需要将这个选项设置为true。
-    state.pipeline_compile_options.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS;
+    state.pipeline_compile_options.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_LEVEL_INSTANCING;
     state.pipeline_compile_options.numPayloadValues = 0;
     state.pipeline_compile_options.numAttributeValues = 2;
     state.pipeline_compile_options.exceptionFlags = OPTIX_EXCEPTION_FLAG_NONE;
@@ -805,7 +811,7 @@ void createPipeline(PathTracerState &state)
         &direct_callable_stack_size_from_state,
         &continuation_stack_size));
 
-    const uint32_t max_traversal_depth = 1;
+    const uint32_t max_traversal_depth = 2;
     OPTIX_CHECK(optixPipelineSetStackSize(
         state.pipeline,
         direct_callable_stack_size_from_traversal,
@@ -997,7 +1003,7 @@ void cleanupState(PathTracerState &state)
     CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.sbt.hitgroupRecordBase)));
     // TODO: Memory leak.
     // CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.d_vertices)));
-    CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.d_gas_output_buffer)));
+    // CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.d_gas_output_buffer)));
     CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.params.accum_buffer)));
     CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.d_params)));
 }
