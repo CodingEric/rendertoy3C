@@ -2,7 +2,7 @@
 
 extern "C"
 {
-    __constant__ wavefront::Params params;
+    __constant__ rendertoy3o::Params params;
 }
 
 //------------------------------------------------------------------------------
@@ -38,7 +38,7 @@ extern "C" __global__ void __raygen__rg()
         float3 ray_direction = normalize(d.x * U + d.y * V + W);
         float3 ray_origin = eye;
 
-        wavefront::RadiancePRD prd;
+        rendertoy3o::RadiancePRD prd;
         prd.attenuation = make_float3(1.f);
         prd.seed = seed;
         prd.depth = 0;
@@ -47,7 +47,7 @@ extern "C" __global__ void __raygen__rg()
 
         for (;;)
         {
-            wavefront::traceRadiance(
+            rendertoy3o::traceRadiance(
                 params.handle,
                 ray_origin,
                 ray_direction,

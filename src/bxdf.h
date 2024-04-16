@@ -5,7 +5,7 @@
 
 #include "random.h"
 
-namespace wavefront {
+namespace rendertoy3o {
 
 struct SampledBxDF
 {
@@ -47,4 +47,4 @@ struct DiffuseBSDF
     }
 };
 
-} // namespace wavefront
+} // namespace rendertoy3o

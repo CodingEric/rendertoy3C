@@ -12,9 +12,17 @@ OPTIX_add_sample_executable( optixPathTracer target_name
   light.h
   material.h
   bxdf.h
+
+  cuda_accel.h
+  cuda_accel.cpp
+  cuda_mesh.h
+  cuda_mesh.cpp
+  cuda_buffer.h
+  cuda_buffer.cpp
   
   util/sampling.h
   util/math.h
+  util/exception.h
 
   gui/display.h
   gui/display.cpp

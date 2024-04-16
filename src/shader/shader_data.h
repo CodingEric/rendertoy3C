@@ -4,7 +4,7 @@
 #include <src/light.h>
 #include "random.h"
 
-namespace wavefront {
+namespace rendertoy3o {
 
 //------------------------------------------------------------------------------
 //

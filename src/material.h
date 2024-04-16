@@ -2,7 +2,7 @@
 
 #include "wavefront.h"
 
-namespace wavefront {
+namespace rendertoy3o {
 
 enum class MaterialType
 {
@@ -37,4 +37,4 @@ struct Material
     // }
 };
 
-} // namespace wavefront
+} // namespace rendertoy3o

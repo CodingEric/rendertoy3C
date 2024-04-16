@@ -1,12 +1,12 @@
 #include <src/shader/shader_common.h>
 
-static __forceinline__ __device__ wavefront::RadiancePRD loadMissRadiancePRD()
+static __forceinline__ __device__ rendertoy3o::RadiancePRD loadMissRadiancePRD()
 {
-    wavefront::RadiancePRD prd = {};
+    rendertoy3o::RadiancePRD prd = {};
     return prd;
 }
 
-static __forceinline__ __device__ void storeMissRadiancePRD( wavefront::RadiancePRD prd )
+static __forceinline__ __device__ void storeMissRadiancePRD( rendertoy3o::RadiancePRD prd )
 {
     optixSetPayload_5( __float_as_uint( prd.emitted.x ) );
     optixSetPayload_6( __float_as_uint( prd.emitted.y ) );
@@ -21,10 +21,10 @@ static __forceinline__ __device__ void storeMissRadiancePRD( wavefront::Radiance
 
 extern "C" __global__ void __miss__radiance()
 {
-    optixSetPayloadTypes( wavefront::PAYLOAD_TYPE_RADIANCE );
+    optixSetPayloadTypes( rendertoy3o::PAYLOAD_TYPE_RADIANCE );
 
-    wavefront::MissData* rt_data  = reinterpret_cast<wavefront::MissData*>( optixGetSbtDataPointer() );
-    wavefront::RadiancePRD prd = loadMissRadiancePRD();
+    rendertoy3o::MissData* rt_data  = reinterpret_cast<rendertoy3o::MissData*>( optixGetSbtDataPointer() );
+    rendertoy3o::RadiancePRD prd = loadMissRadiancePRD();
 
     // prd.radiance  = make_float3( rt_data->bg_color );
     prd.radiance = optixDirectCall<float3>(0);

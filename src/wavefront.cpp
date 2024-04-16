@@ -25,6 +25,7 @@
 #include "mesh.h"
 #include "light.h"
 #include "gui/display.h"
+#include "util/exception.h"
 
 #include <array>
 #include <cstring>
@@ -61,10 +62,10 @@ struct Record
     T data;
 };
 
-typedef Record<wavefront::RayGenData> RayGenRecord;
-typedef Record<wavefront::MissData> MissRecord;
-typedef Record<wavefront::HitGroupData> HitGroupRecord;
-typedef Record<wavefront::CallableData> CallableRecord;
+typedef Record<rendertoy3o::RayGenData> RayGenRecord;
+typedef Record<rendertoy3o::MissData> MissRecord;
+typedef Record<rendertoy3o::HitGroupData> HitGroupRecord;
+typedef Record<rendertoy3o::CallableData> CallableRecord;
 
 struct Vertex
 {
@@ -96,7 +97,7 @@ struct PathTracerState
     std::vector<cudaArray_t> textureArrays = {};
     std::vector<cudaTextureObject_t> textureObjects = {};
 
-    CUdeviceptr motion_transform = {};
+    std::vector<CUdeviceptr> motion_transform = {};
 
     OptixModule ptx_module = 0;
     OptixModule ptx_miss_module = 0;
@@ -111,8 +112,8 @@ struct PathTracerState
     OptixProgramGroup callable_test_group = 0;
 
     CUstream stream = 0;
-    wavefront::Params params;
-    wavefront::Params *d_params;
+    rendertoy3o::Params params;
+    rendertoy3o::Params *d_params;
 
     OptixShaderBindingTable sbt = {};
 
@@ -127,8 +128,8 @@ struct PathTracerState
 //
 //------------------------------------------------------------------------------
 
-std::vector<wavefront::Mesh> g_meshes;
-std::vector<wavefront::Texture> g_textures;
+std::vector<rendertoy3o::Mesh> g_meshes;
+std::vector<rendertoy3o::Texture> g_textures;
 
 //------------------------------------------------------------------------------
 //
@@ -154,7 +155,7 @@ static void mouseButtonCallback(GLFWwindow *window, int button, int action, int 
 
 static void cursorPosCallback(GLFWwindow *window, double xpos, double ypos)
 {
-    wavefront::Params *params = static_cast<wavefront::Params *>(glfwGetWindowUserPointer(window));
+    rendertoy3o::Params *params = static_cast<rendertoy3o::Params *>(glfwGetWindowUserPointer(window));
 
     if (mouse_button == GLFW_MOUSE_BUTTON_LEFT)
     {
@@ -179,7 +180,7 @@ static void windowSizeCallback(GLFWwindow *window, int32_t res_x, int32_t res_y)
     // Output dimensions must be at least 1 in both x and y.
     sutil::ensureMinimumSize(res_x, res_y);
 
-    wavefront::Params *params = static_cast<wavefront::Params *>(glfwGetWindowUserPointer(window));
+    rendertoy3o::Params *params = static_cast<rendertoy3o::Params *>(glfwGetWindowUserPointer(window));
     params->width = res_x;
     params->height = res_y;
     camera_changed = true;
@@ -232,7 +233,7 @@ void printUsageAndExit(const char *argv0)
 
 void initLaunchParams(PathTracerState &state)
 {
-    CUDA_CHECK(cudaMalloc(
+    RENDERTOY3O_CUDA_CHECK(cudaMalloc(
         reinterpret_cast<void **>(&state.params.accum_buffer),
         state.params.width * state.params.height * sizeof(float4)));
     state.params.frame_buffer = nullptr; // Will be set when output buffer is mapped
@@ -241,11 +242,11 @@ void initLaunchParams(PathTracerState &state)
     state.params.subframe_index = 0u;
     state.params.handle = state.ias_handle;
 
-    CUDA_CHECK(cudaStreamCreate(&state.stream));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_params), sizeof(wavefront::Params)));
+    RENDERTOY3O_CUDA_CHECK(cudaStreamCreate(&state.stream));
+    RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_params), sizeof(rendertoy3o::Params)));
 }
 
-void handleCameraUpdate(wavefront::Params &params)
+void handleCameraUpdate(rendertoy3o::Params &params)
 {
     if (!camera_changed)
         return;
@@ -256,7 +257,7 @@ void handleCameraUpdate(wavefront::Params &params)
     camera.UVWFrame(params.U, params.V, params.W);
 }
 
-void handleResize(sutil::CUDAOutputBuffer<uchar4> &output_buffer, wavefront::Params &params)
+void handleResize(sutil::CUDAOutputBuffer<uchar4> &output_buffer, rendertoy3o::Params &params)
 {
     if (!resize_dirty)
         return;
@@ -265,13 +266,13 @@ void handleResize(sutil::CUDAOutputBuffer<uchar4> &output_buffer, wavefront::Par
     output_buffer.resize(params.width, params.height);
 
     // Realloc accumulation buffer
-    CUDA_CHECK(cudaFree(reinterpret_cast<void *>(params.accum_buffer)));
-    CUDA_CHECK(cudaMalloc(
+    RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(params.accum_buffer)));
+    RENDERTOY3O_CUDA_CHECK(cudaMalloc(
         reinterpret_cast<void **>(&params.accum_buffer),
         params.width * params.height * sizeof(float4)));
 }
 
-void updateState(sutil::CUDAOutputBuffer<uchar4> &output_buffer, wavefront::Params &params)
+void updateState(sutil::CUDAOutputBuffer<uchar4> &output_buffer, rendertoy3o::Params &params)
 {
     // Update params on device
     if (camera_changed || resize_dirty)
@@ -286,16 +287,16 @@ void launchSubframe(sutil::CUDAOutputBuffer<uchar4> &output_buffer, PathTracerSt
     // Launch
     uchar4 *result_buffer_data = output_buffer.map();
     state.params.frame_buffer = result_buffer_data;
-    CUDA_CHECK(cudaMemcpyAsync(
+    RENDERTOY3O_CUDA_CHECK(cudaMemcpyAsync(
         reinterpret_cast<void *>(state.d_params),
-        &state.params, sizeof(wavefront::Params),
+        &state.params, sizeof(rendertoy3o::Params),
         cudaMemcpyHostToDevice, state.stream));
 
-    OPTIX_CHECK(optixLaunch(
+    RENDERTOY3O_OPTIX_CHECK(optixLaunch(
         state.pipeline,
         state.stream,
         reinterpret_cast<CUdeviceptr>(state.d_params),
-        sizeof(wavefront::Params),
+        sizeof(rendertoy3o::Params),
         &state.sbt,
         state.params.width,  // launch width
         state.params.height, // launch height
@@ -305,7 +306,7 @@ void launchSubframe(sutil::CUDAOutputBuffer<uchar4> &output_buffer, PathTracerSt
     CUDA_SYNC_CHECK();
 }
 
-void displaySubframe(sutil::CUDAOutputBuffer<uchar4> &output_buffer, wavefront::GLDisplay &gl_display, GLFWwindow *window)
+void displaySubframe(sutil::CUDAOutputBuffer<uchar4> &output_buffer, rendertoy3o::GLDisplay &gl_display, GLFWwindow *window)
 {
     // Display
     int framebuf_res_x = 0; // The display's resolution (could be HDPI res)
@@ -344,11 +345,11 @@ void initCameraState()
 void createContext(PathTracerState &state)
 {
     // Initialize CUDA
-    CUDA_CHECK(cudaFree(0));
+    RENDERTOY3O_CUDA_CHECK(cudaFree(0));
 
     OptixDeviceContext context;
     CUcontext cu_ctx = 0; // zero means take the current context
-    OPTIX_CHECK(optixInit());
+    RENDERTOY3O_OPTIX_CHECK(optixInit());
     OptixDeviceContextOptions options = {};
     options.logCallbackFunction = &context_log_cb;
     options.logCallbackLevel = 4;
@@ -356,7 +357,7 @@ void createContext(PathTracerState &state)
     // This may incur significant performance cost and should only be done during development.
     options.validationMode = OPTIX_DEVICE_CONTEXT_VALIDATION_MODE_ALL;
 #endif
-    OPTIX_CHECK(optixDeviceContextCreate(cu_ctx, &options, &context));
+    RENDERTOY3O_OPTIX_CHECK(optixDeviceContextCreate(cu_ctx, &options, &context));
 
     state.context = context;
 }
@@ -373,44 +374,43 @@ void buildMeshAccel(PathTracerState &state)
     state.d_texcoords.resize(g_meshes.size());
     state.gas_handle.resize(g_meshes.size());
     state.d_gas_output_buffer.resize(g_meshes.size());
-    // std::vector<uint32_t> triangleInputFlags(g_meshes.size());
-    // std::vector<OptixBuildInput> triangleInputs(g_meshes.size());
+    state.motion_transform.resize(g_meshes.size());
+    state.gas_motion_handle.resize(g_meshes.size());
 
     for (size_t i = 0; i < g_meshes.size(); ++i)
-    // for(;;)
     {
         const auto &mesh = g_meshes[i];
 
         // 几何变形运动模糊：vertexBuffers存储的大小变为mesh.vertices.size() * NUM_KEYS。
         const size_t per_keyframe_vertices_size_in_bytes = mesh.vertices[0].size() * sizeof(float3);
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_vertices[i]), mesh.vertices.size() * per_keyframe_vertices_size_in_bytes));
-        for (unsigned int j = 0; j < 2; ++j)
+        RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_vertices[i]), mesh.vertices.size() * per_keyframe_vertices_size_in_bytes));
+        for (unsigned int j = 0; j < mesh.num_keys; ++j)
         {
-            CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.d_vertices[i] + j * per_keyframe_vertices_size_in_bytes), &mesh.vertices[j][0], per_keyframe_vertices_size_in_bytes, cudaMemcpyHostToDevice));
+            RENDERTOY3O_CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.d_vertices[i] + j * per_keyframe_vertices_size_in_bytes), &mesh.vertices[j][0], per_keyframe_vertices_size_in_bytes, cudaMemcpyHostToDevice));
         }
         // 几何变形运动模糊：在这一部分之后创建一个CUDeviceptr数组，将上述申请的mesh.vertices.size() * NUM_KEYS内存空间分成若干个区块。然后将这个CUDeviceptr传入triangleArray.vertexBuffers。
-        CUdeviceptr *vertices_per_key = new CUdeviceptr[2];
-        for (unsigned int j = 0; j < 2; ++j)
+        std::vector<CUdeviceptr> vertices_per_key(mesh.num_keys);
+        for (unsigned int j = 0; j < mesh.num_keys; ++j)
         {
             vertices_per_key[j] = state.d_vertices[i] + j * per_keyframe_vertices_size_in_bytes;
         }
 
         const size_t indices_size_in_bytes = mesh.indices.size() * sizeof(int3);
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_indices[i]), indices_size_in_bytes));
-        CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.d_indices[i]), mesh.indices.data(), indices_size_in_bytes, cudaMemcpyHostToDevice));
+        RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_indices[i]), indices_size_in_bytes));
+        RENDERTOY3O_CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.d_indices[i]), mesh.indices.data(), indices_size_in_bytes, cudaMemcpyHostToDevice));
 
         const size_t per_keyframe_normals_size_in_bytes = mesh.normals[0].size() * sizeof(float3);
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_normals[i]), mesh.normals.size() * per_keyframe_normals_size_in_bytes));
-        for (unsigned int j = 0; j < 2; ++j)
+        RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_normals[i]), mesh.normals.size() * per_keyframe_normals_size_in_bytes));
+        for (unsigned int j = 0; j < mesh.num_keys; ++j)
         {
-            CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.d_normals[i] + j * per_keyframe_normals_size_in_bytes), &mesh.normals[j][0], per_keyframe_normals_size_in_bytes, cudaMemcpyHostToDevice));
+            RENDERTOY3O_CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.d_normals[i] + j * per_keyframe_normals_size_in_bytes), &mesh.normals[j][0], per_keyframe_normals_size_in_bytes, cudaMemcpyHostToDevice));
         }
 
         const size_t per_keyframe_texcoords_size_in_bytes = mesh.texcoords[0].size() * sizeof(float2);
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_texcoords[i]), mesh.texcoords.size() * per_keyframe_texcoords_size_in_bytes));
-        for (unsigned int j = 0; j < 2; ++j)
+        RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_texcoords[i]), mesh.texcoords.size() * per_keyframe_texcoords_size_in_bytes));
+        for (unsigned int j = 0; j < mesh.num_keys; ++j)
         {
-            CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.d_texcoords[i] + j * per_keyframe_texcoords_size_in_bytes), &mesh.texcoords[j][0], per_keyframe_texcoords_size_in_bytes, cudaMemcpyHostToDevice));
+            RENDERTOY3O_CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.d_texcoords[i] + j * per_keyframe_texcoords_size_in_bytes), &mesh.texcoords[j][0], per_keyframe_texcoords_size_in_bytes, cudaMemcpyHostToDevice));
         }
 
         OptixBuildInput triangleInput{};
@@ -419,8 +419,7 @@ void buildMeshAccel(PathTracerState &state)
         triangleInput.triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
         triangleInput.triangleArray.vertexStrideInBytes = sizeof(float3);
         triangleInput.triangleArray.numVertices = static_cast<uint32_t>(mesh.vertices[0].size());
-        // triangleInput.triangleArray.vertexBuffers = &state.d_vertices[i]; // 几何变形运动模糊：vertexBuffers接受一个CUDeviceptr数组的指针。
-        triangleInput.triangleArray.vertexBuffers = vertices_per_key;
+        triangleInput.triangleArray.vertexBuffers = vertices_per_key.data();
 
         triangleInput.triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
         triangleInput.triangleArray.indexStrideInBytes = sizeof(int3);
@@ -439,14 +438,14 @@ void buildMeshAccel(PathTracerState &state)
         OptixAccelBuildOptions accel_options = {};
         accel_options.buildFlags = OPTIX_BUILD_FLAG_ALLOW_COMPACTION; // 这是加速结构压缩必须的第1个要求
         accel_options.operation = OPTIX_BUILD_OPERATION_BUILD;
-        accel_options.motionOptions.numKeys = 2;
+        accel_options.motionOptions.numKeys = mesh.num_keys;
         accel_options.motionOptions.timeBegin = 0.0f;
         accel_options.motionOptions.timeEnd = 1.0f;
         accel_options.motionOptions.flags = OPTIX_MOTION_FLAG_NONE;
 
         // 计算加速结构在GPU上[将要]占用的显示内存大小。OptixAccelBufferSizes是一个结构体，内部含有三个参量。这里由于没有更新BVH，所以仅仅采用前两个变量。
         OptixAccelBufferSizes gas_buffer_sizes;
-        OPTIX_CHECK(optixAccelComputeMemoryUsage(
+        RENDERTOY3O_OPTIX_CHECK(optixAccelComputeMemoryUsage(
             state.context,
             &accel_options,
             &triangleInput,
@@ -455,13 +454,13 @@ void buildMeshAccel(PathTracerState &state)
 
         // 在设备上申请临时存储空间。
         CUdeviceptr d_temp_buffer;
-        CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_temp_buffer), gas_buffer_sizes.tempSizeInBytes));
+        RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_temp_buffer), gas_buffer_sizes.tempSizeInBytes));
 
         // non-compacted output
         // 在设备上申请输出内存空间。
         CUdeviceptr d_buffer_temp_output_gas_and_compacted_size;
         size_t compactedSizeOffset = roundUp<size_t>(gas_buffer_sizes.outputSizeInBytes, 8ull);
-        CUDA_CHECK(cudaMalloc(
+        RENDERTOY3O_CUDA_CHECK(cudaMalloc(
             reinterpret_cast<void **>(&d_buffer_temp_output_gas_and_compacted_size),
             compactedSizeOffset + 8));
 
@@ -473,7 +472,7 @@ void buildMeshAccel(PathTracerState &state)
         // 执行加速结构构建。
         // 注意在这个构建过程中并没有对BVH进行压缩。
         // 但是这一个过程会计算对BVH压缩以后的大小并且发射到emitProperty中。
-        OPTIX_CHECK(optixAccelBuild(
+        RENDERTOY3O_OPTIX_CHECK(optixAccelBuild(
             state.context,
             0, // CUDA stream
             &accel_options,
@@ -488,21 +487,21 @@ void buildMeshAccel(PathTracerState &state)
             1              // num emitted properties
             ));
 
-        CUDA_CHECK(cudaFree(reinterpret_cast<void *>(d_temp_buffer)));
-        // CUDA_CHECK(cudaFree(reinterpret_cast<void *>(d_mat_indices)));
+        RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(d_temp_buffer)));
+        // RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(d_mat_indices)));
 
         size_t compacted_gas_size;
-        CUDA_CHECK(cudaMemcpy(&compacted_gas_size, (void *)emitProperty.result, sizeof(size_t), cudaMemcpyDeviceToHost));
+        RENDERTOY3O_CUDA_CHECK(cudaMemcpy(&compacted_gas_size, (void *)emitProperty.result, sizeof(size_t), cudaMemcpyDeviceToHost));
 
         // 这是技术手册要求的在CPU上执行的判断，因为BVH压缩过程可能在极端情况下导致结果变差。
         if (compacted_gas_size < gas_buffer_sizes.outputSizeInBytes)
         {
-            CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_gas_output_buffer[i]), compacted_gas_size));
+            RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_gas_output_buffer[i]), compacted_gas_size));
 
             // use handle as input and output
-            OPTIX_CHECK(optixAccelCompact(state.context, 0, state.gas_handle[i], state.d_gas_output_buffer[i], compacted_gas_size, &state.gas_handle[i]));
+            RENDERTOY3O_OPTIX_CHECK(optixAccelCompact(state.context, 0, state.gas_handle[i], state.d_gas_output_buffer[i], compacted_gas_size, &state.gas_handle[i]));
 
-            CUDA_CHECK(cudaFree((void *)d_buffer_temp_output_gas_and_compacted_size));
+            RENDERTOY3O_CUDA_CHECK(cudaFree((void *)d_buffer_temp_output_gas_and_compacted_size));
         }
         else
         {
@@ -527,21 +526,23 @@ void buildMeshAccel(PathTracerState &state)
         //     motion_transform.motionOptions.flags = OPTIX_MOTION_FLAG_NONE;
         //     memcpy(motion_transform.transform, motion_matrix_keys, 2 * 12 * sizeof(float));
 
-        //     CUDA_CHECK(cudaMalloc(
-        //         reinterpret_cast<void **>(&state.motion_transform),
+        //     RENDERTOY3O_CUDA_CHECK(cudaMalloc(
+        //         reinterpret_cast<void **>(&state.motion_transform[i]),
         //         sizeof(OptixMatrixMotionTransform)));
 
-        //     CUDA_CHECK(cudaMemcpy(
-        //         reinterpret_cast<void *>(state.motion_transform),
+        //     RENDERTOY3O_CUDA_CHECK(cudaMemcpy(
+        //         reinterpret_cast<void *>(state.motion_transform[i]),
         //         &motion_transform,
         //         sizeof(OptixMatrixMotionTransform),
         //         cudaMemcpyHostToDevice));
 
-        //     OPTIX_CHECK(optixConvertPointerToTraversableHandle(
+        //     RENDERTOY3O_OPTIX_CHECK(optixConvertPointerToTraversableHandle(
         //         state.context,
-        //         state.motion_transform,
+        //         state.motion_transform[i],
         //         OPTIX_TRAVERSABLE_TYPE_MATRIX_MOTION_TRANSFORM,
-        //         &state.gas_motion_handle[i])); // 运动模糊：这说明了几何级别变形需要 TLAS/BLAS才能工作，并且会生成一个独立于原有gas_handle的新motion_gas_handle。
+        //         &state.gas_motion_handle[i])); // 运动模糊：这说明了几何级别变形会生成一个独立于原有gas_handle的新motion_gas_handle。这个handle可以被插入全局handle，也可以被用于TLAS。
+
+        //     // RENDERTOY3O_CUDA_CHECK(cudaFree((void *)state.motion_transform[i]));
         // }
     }
 }
@@ -563,8 +564,8 @@ void buildInstanceAccel(PathTracerState &state)
     }
 
     CUdeviceptr d_instances;
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_instances), instance_size_in_bytes * g_meshes.size()));
-    CUDA_CHECK(cudaMemcpy(
+    RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_instances), instance_size_in_bytes * g_meshes.size()));
+    RENDERTOY3O_CUDA_CHECK(cudaMemcpy(
         reinterpret_cast<void *>(d_instances),
         optix_instances.data(),
         instance_size_in_bytes * g_meshes.size(),
@@ -585,7 +586,7 @@ void buildInstanceAccel(PathTracerState &state)
     // accel_options.motionOptions.flags     = OPTIX_MOTION_FLAG_NONE;
 
     OptixAccelBufferSizes ias_buffer_sizes;
-    OPTIX_CHECK(optixAccelComputeMemoryUsage(
+    RENDERTOY3O_OPTIX_CHECK(optixAccelComputeMemoryUsage(
         state.context,
         &accel_options,
         &instance_input,
@@ -593,14 +594,14 @@ void buildInstanceAccel(PathTracerState &state)
         &ias_buffer_sizes));
 
     CUdeviceptr d_temp_buffer;
-    CUDA_CHECK(cudaMalloc(
+    RENDERTOY3O_CUDA_CHECK(cudaMalloc(
         reinterpret_cast<void **>(&d_temp_buffer),
         ias_buffer_sizes.tempSizeInBytes));
-    CUDA_CHECK(cudaMalloc(
+    RENDERTOY3O_CUDA_CHECK(cudaMalloc(
         reinterpret_cast<void **>(&state.ias_output_buffer),
         ias_buffer_sizes.outputSizeInBytes));
 
-    OPTIX_CHECK(optixAccelBuild(
+    RENDERTOY3O_OPTIX_CHECK(optixAccelBuild(
         state.context,
         0, // CUDA stream
         &accel_options,
@@ -615,8 +616,8 @@ void buildInstanceAccel(PathTracerState &state)
         0        // num emitted properties
         ));
 
-    CUDA_CHECK(cudaFree(reinterpret_cast<void *>(d_temp_buffer)));
-    CUDA_CHECK(cudaFree(reinterpret_cast<void *>(d_instances)));
+    RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(d_temp_buffer)));
+    RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(d_instances)));
 }
 
 /// @brief 使用含有各个pipeline的cu文件创建OptiX模块
@@ -626,8 +627,8 @@ void createModule(PathTracerState &state)
     OptixPayloadType payloadType = {};
     // radiance prd
     // 辐照度payload，这里是文件结构
-    payloadType.numPayloadValues = sizeof(wavefront::radiancePayloadSemantics) / sizeof(wavefront::radiancePayloadSemantics[0]);
-    payloadType.payloadSemantics = wavefront::radiancePayloadSemantics;
+    payloadType.numPayloadValues = sizeof(rendertoy3o::radiancePayloadSemantics) / sizeof(rendertoy3o::radiancePayloadSemantics[0]);
+    payloadType.payloadSemantics = rendertoy3o::radiancePayloadSemantics;
 
     OptixModuleCompileOptions module_compile_options = {};
 #if !defined(NDEBUG)
@@ -649,7 +650,7 @@ void createModule(PathTracerState &state)
     // 一个非常神奇的发现：这个程序的.cu文件似乎是动态加载的！（应该是加载了被nvcc编译后的结果）
     const char *input = sutil::getInputData(OPTIX_SAMPLE_NAME, OPTIX_SAMPLE_DIR, "raygen.cu", inputSize);
 
-    OPTIX_CHECK_LOG(optixModuleCreate(
+    RENDERTOY3O_OPTIX_CHECK_LOG(optixModuleCreate(
         state.context,
         &module_compile_options,
         &state.pipeline_compile_options,
@@ -660,7 +661,7 @@ void createModule(PathTracerState &state)
 
     const char *input_miss = sutil::getInputData(OPTIX_SAMPLE_NAME, OPTIX_SAMPLE_DIR, "miss.cu", inputSize);
 
-    OPTIX_CHECK_LOG(optixModuleCreate(
+    RENDERTOY3O_OPTIX_CHECK_LOG(optixModuleCreate(
         state.context,
         &module_compile_options,
         &state.pipeline_compile_options,
@@ -671,7 +672,7 @@ void createModule(PathTracerState &state)
 
     const char *input_closehit = sutil::getInputData(OPTIX_SAMPLE_NAME, OPTIX_SAMPLE_DIR, "closehit_radiance.cu", inputSize);
 
-    OPTIX_CHECK_LOG(optixModuleCreate(
+    RENDERTOY3O_OPTIX_CHECK_LOG(optixModuleCreate(
         state.context,
         &module_compile_options,
         &state.pipeline_compile_options,
@@ -682,7 +683,7 @@ void createModule(PathTracerState &state)
 
     const char *input_test = sutil::getInputData(OPTIX_SAMPLE_NAME, OPTIX_SAMPLE_DIR, "test.cu", inputSize);
 
-    OPTIX_CHECK_LOG(optixModuleCreate(
+    RENDERTOY3O_OPTIX_CHECK_LOG(optixModuleCreate(
         state.context,
         &module_compile_options,
         &state.pipeline_compile_options,
@@ -704,7 +705,7 @@ void createProgramGroups(PathTracerState &state)
         raygen_prog_group_desc.raygen.module = state.ptx_module;
         raygen_prog_group_desc.raygen.entryFunctionName = "__raygen__rg";
 
-        OPTIX_CHECK_LOG(optixProgramGroupCreate(
+        RENDERTOY3O_OPTIX_CHECK_LOG(optixProgramGroupCreate(
             state.context, &raygen_prog_group_desc,
             1, // num program groups
             &program_group_options,
@@ -717,7 +718,7 @@ void createProgramGroups(PathTracerState &state)
         miss_prog_group_desc.kind = OPTIX_PROGRAM_GROUP_KIND_MISS;
         miss_prog_group_desc.miss.module = state.ptx_miss_module;
         miss_prog_group_desc.miss.entryFunctionName = "__miss__radiance";
-        OPTIX_CHECK_LOG(optixProgramGroupCreate(
+        RENDERTOY3O_OPTIX_CHECK_LOG(optixProgramGroupCreate(
             state.context, &miss_prog_group_desc,
             1, // num program groups
             &program_group_options,
@@ -730,7 +731,7 @@ void createProgramGroups(PathTracerState &state)
         hit_prog_group_desc.kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
         hit_prog_group_desc.hitgroup.moduleCH = state.ptx_closehit;
         hit_prog_group_desc.hitgroup.entryFunctionNameCH = "__closesthit__radiance";
-        OPTIX_CHECK_LOG(optixProgramGroupCreate(
+        RENDERTOY3O_OPTIX_CHECK_LOG(optixProgramGroupCreate(
             state.context,
             &hit_prog_group_desc,
             1, // num program groups
@@ -745,7 +746,7 @@ void createProgramGroups(PathTracerState &state)
         callable_prog_group_desc.kind = OPTIX_PROGRAM_GROUP_KIND_CALLABLES;
         callable_prog_group_desc.callables.moduleDC = state.ptx_test;
         callable_prog_group_desc.callables.entryFunctionNameDC = "__direct_callable__test";
-        OPTIX_CHECK_LOG(optixProgramGroupCreate(
+        RENDERTOY3O_OPTIX_CHECK_LOG(optixProgramGroupCreate(
             state.context,
             &callable_prog_group_desc,
             1, // num program groups
@@ -772,7 +773,7 @@ void createPipeline(PathTracerState &state)
     OptixPipelineLinkOptions pipeline_link_options = {};
     pipeline_link_options.maxTraceDepth = 2;
 
-    OPTIX_CHECK_LOG(optixPipelineCreate(
+    RENDERTOY3O_OPTIX_CHECK_LOG(optixPipelineCreate(
         state.context,
         &state.pipeline_compile_options,
         &pipeline_link_options,
@@ -785,10 +786,10 @@ void createPipeline(PathTracerState &state)
     // parameters to optixPipelineSetStackSize.
     // 以下部分都是可选的，用于计算GPU程序栈的大小并且进行程序栈创建。
     OptixStackSizes stack_sizes = {};
-    OPTIX_CHECK(optixUtilAccumulateStackSizes(state.raygen_prog_group, &stack_sizes, state.pipeline));
-    OPTIX_CHECK(optixUtilAccumulateStackSizes(state.radiance_miss_group, &stack_sizes, state.pipeline));
-    OPTIX_CHECK(optixUtilAccumulateStackSizes(state.radiance_hit_group, &stack_sizes, state.pipeline));
-    OPTIX_CHECK(optixUtilAccumulateStackSizes(state.callable_test_group, &stack_sizes, state.pipeline));
+    RENDERTOY3O_OPTIX_CHECK(optixUtilAccumulateStackSizes(state.raygen_prog_group, &stack_sizes, state.pipeline));
+    RENDERTOY3O_OPTIX_CHECK(optixUtilAccumulateStackSizes(state.radiance_miss_group, &stack_sizes, state.pipeline));
+    RENDERTOY3O_OPTIX_CHECK(optixUtilAccumulateStackSizes(state.radiance_hit_group, &stack_sizes, state.pipeline));
+    RENDERTOY3O_OPTIX_CHECK(optixUtilAccumulateStackSizes(state.callable_test_group, &stack_sizes, state.pipeline));
 
     uint32_t max_trace_depth = 2;
     uint32_t max_cc_depth = 0;
@@ -796,7 +797,7 @@ void createPipeline(PathTracerState &state)
     uint32_t direct_callable_stack_size_from_traversal;
     uint32_t direct_callable_stack_size_from_state;
     uint32_t continuation_stack_size;
-    OPTIX_CHECK(optixUtilComputeStackSizes(
+    RENDERTOY3O_OPTIX_CHECK(optixUtilComputeStackSizes(
         &stack_sizes,
         max_trace_depth,
         max_cc_depth,
@@ -806,7 +807,7 @@ void createPipeline(PathTracerState &state)
         &continuation_stack_size));
 
     const uint32_t max_traversal_depth = 2;
-    OPTIX_CHECK(optixPipelineSetStackSize(
+    RENDERTOY3O_OPTIX_CHECK(optixPipelineSetStackSize(
         state.pipeline,
         direct_callable_stack_size_from_traversal,
         direct_callable_stack_size_from_state,
@@ -835,9 +836,9 @@ void createTexture(PathTracerState &state)
         channel_desc = cudaCreateChannelDesc<uchar4>();
 
         cudaArray_t &pixelArray = state.textureArrays[i];
-        CUDA_CHECK(cudaMallocArray(&pixelArray, &channel_desc, width, height));
+        RENDERTOY3O_CUDA_CHECK(cudaMallocArray(&pixelArray, &channel_desc, width, height));
 
-        CUDA_CHECK(cudaMemcpy2DToArray(pixelArray, 0, 0, texture.pixel.data(), pitch, pitch, height, cudaMemcpyHostToDevice));
+        RENDERTOY3O_CUDA_CHECK(cudaMemcpy2DToArray(pixelArray, 0, 0, texture.pixel.data(), pitch, pitch, height, cudaMemcpyHostToDevice));
 
         resDesc.resType = cudaResourceTypeArray;
         resDesc.res.array.array = pixelArray;
@@ -856,7 +857,7 @@ void createTexture(PathTracerState &state)
         texDesc.sRGB = 0;
 
         cudaTextureObject_t cudaTex = 0;
-        CUDA_CHECK(cudaCreateTextureObject(&cudaTex, &resDesc, &texDesc, nullptr));
+        RENDERTOY3O_CUDA_CHECK(cudaCreateTextureObject(&cudaTex, &resDesc, &texDesc, nullptr));
         state.textureObjects[i] = cudaTex;
     }
 }
@@ -865,7 +866,7 @@ void createTexture(PathTracerState &state)
 /// @param state
 void buildLightSampler(PathTracerState &state)
 {
-    std::vector<wavefront::Light> lights = {};
+    std::vector<rendertoy3o::Light> lights = {};
     for (const auto &mesh : g_meshes)
     {
         if (length(mesh.material.m_emissive) < 1e-5f)
@@ -875,14 +876,14 @@ void buildLightSampler(PathTracerState &state)
 
         for (const int3 &triangleIndex : mesh.indices)
         {
-            wavefront::Light light = wavefront::Light(mesh.material.m_emissive, mesh.vertices[0][triangleIndex.x], mesh.vertices[0][triangleIndex.y], mesh.vertices[0][triangleIndex.z]);
+            rendertoy3o::Light light = rendertoy3o::Light(mesh.material.m_emissive, mesh.vertices[0][triangleIndex.x], mesh.vertices[0][triangleIndex.y], mesh.vertices[0][triangleIndex.z]);
             lights.push_back(light);
         }
     }
 
     state.params.light_count = lights.size();
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.params.lights), lights.size() * sizeof(wavefront::Light)));
-    CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.params.lights), lights.data(), lights.size() * sizeof(wavefront::Light), cudaMemcpyHostToDevice));
+    RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.params.lights), lights.size() * sizeof(rendertoy3o::Light)));
+    RENDERTOY3O_CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.params.lights), lights.data(), lights.size() * sizeof(rendertoy3o::Light), cudaMemcpyHostToDevice));
 }
 
 /// @brief 创建着色器绑定表，和材质强关联
@@ -891,12 +892,12 @@ void createSBT(PathTracerState &state)
 {
     CUdeviceptr d_raygen_record;
     const size_t raygen_record_size = sizeof(RayGenRecord);
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_raygen_record), raygen_record_size));
+    RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_raygen_record), raygen_record_size));
 
     RayGenRecord rg_sbt = {};
-    OPTIX_CHECK(optixSbtRecordPackHeader(state.raygen_prog_group, &rg_sbt));
+    RENDERTOY3O_OPTIX_CHECK(optixSbtRecordPackHeader(state.raygen_prog_group, &rg_sbt));
 
-    CUDA_CHECK(cudaMemcpy(
+    RENDERTOY3O_CUDA_CHECK(cudaMemcpy(
         reinterpret_cast<void *>(d_raygen_record),
         &rg_sbt,
         raygen_record_size,
@@ -904,21 +905,21 @@ void createSBT(PathTracerState &state)
 
     CUdeviceptr d_miss_records;
     const size_t miss_record_size = sizeof(MissRecord);
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_miss_records), miss_record_size * wavefront::RAY_TYPE_COUNT));
+    RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_miss_records), miss_record_size * rendertoy3o::RAY_TYPE_COUNT));
 
     MissRecord ms_sbt[1];
-    OPTIX_CHECK(optixSbtRecordPackHeader(state.radiance_miss_group, &ms_sbt[0]));
+    RENDERTOY3O_OPTIX_CHECK(optixSbtRecordPackHeader(state.radiance_miss_group, &ms_sbt[0]));
     ms_sbt[0].data.bg_color = make_float4(0.0f);
 
-    CUDA_CHECK(cudaMemcpy(
+    RENDERTOY3O_CUDA_CHECK(cudaMemcpy(
         reinterpret_cast<void *>(d_miss_records),
         ms_sbt,
-        miss_record_size * wavefront::RAY_TYPE_COUNT,
+        miss_record_size * rendertoy3o::RAY_TYPE_COUNT,
         cudaMemcpyHostToDevice));
 
     CUdeviceptr d_hitgroup_records;
     const size_t hitgroup_record_size = sizeof(HitGroupRecord);
-    CUDA_CHECK(cudaMalloc(
+    RENDERTOY3O_CUDA_CHECK(cudaMalloc(
         reinterpret_cast<void **>(&d_hitgroup_records),
         hitgroup_record_size * g_meshes.size()));
 
@@ -926,7 +927,7 @@ void createSBT(PathTracerState &state)
     for (size_t i = 0; i < g_meshes.size(); ++i)
     {
         HitGroupRecord record;
-        OPTIX_CHECK(optixSbtRecordPackHeader(state.radiance_hit_group, &record));
+        RENDERTOY3O_OPTIX_CHECK(optixSbtRecordPackHeader(state.radiance_hit_group, &record));
         // record.data.diffuse_color = {0.8f, 0.8f, 0.8f};
         if (g_meshes[i].material.m_diffuseTextureID != -1)
         {
@@ -946,7 +947,7 @@ void createSBT(PathTracerState &state)
         hitGroupRecords.push_back(record);
     }
 
-    CUDA_CHECK(cudaMemcpy(
+    RENDERTOY3O_CUDA_CHECK(cudaMemcpy(
         reinterpret_cast<void *>(d_hitgroup_records),
         hitGroupRecords.data(),
         hitgroup_record_size * g_meshes.size(),
@@ -954,18 +955,18 @@ void createSBT(PathTracerState &state)
 
     CUdeviceptr d_callable_records;
     const size_t callable_record_size = sizeof(CallableRecord);
-    CUDA_CHECK(cudaMalloc(
+    RENDERTOY3O_CUDA_CHECK(cudaMalloc(
         reinterpret_cast<void **>(&d_callable_records),
         callable_record_size * 1));
     std::vector<CallableRecord> callableRecords;
     for (size_t i = 0; i < 1; ++i)
     {
         CallableRecord record;
-        OPTIX_CHECK(optixSbtRecordPackHeader(state.callable_test_group, &record));
+        RENDERTOY3O_OPTIX_CHECK(optixSbtRecordPackHeader(state.callable_test_group, &record));
         callableRecords.push_back(record);
     }
 
-    CUDA_CHECK(cudaMemcpy(
+    RENDERTOY3O_CUDA_CHECK(cudaMemcpy(
         reinterpret_cast<void *>(d_callable_records),
         callableRecords.data(),
         callable_record_size * 1,
@@ -974,7 +975,7 @@ void createSBT(PathTracerState &state)
     state.sbt.raygenRecord = d_raygen_record;
     state.sbt.missRecordBase = d_miss_records;
     state.sbt.missRecordStrideInBytes = static_cast<uint32_t>(miss_record_size);
-    state.sbt.missRecordCount = wavefront::RAY_TYPE_COUNT;
+    state.sbt.missRecordCount = rendertoy3o::RAY_TYPE_COUNT;
     state.sbt.hitgroupRecordBase = d_hitgroup_records;
     state.sbt.hitgroupRecordStrideInBytes = static_cast<uint32_t>(hitgroup_record_size);
     state.sbt.hitgroupRecordCount = g_meshes.size();
@@ -985,21 +986,21 @@ void createSBT(PathTracerState &state)
 
 void cleanupState(PathTracerState &state)
 {
-    OPTIX_CHECK(optixPipelineDestroy(state.pipeline));
-    OPTIX_CHECK(optixProgramGroupDestroy(state.raygen_prog_group));
-    OPTIX_CHECK(optixProgramGroupDestroy(state.radiance_miss_group));
-    OPTIX_CHECK(optixProgramGroupDestroy(state.radiance_hit_group));
-    OPTIX_CHECK(optixModuleDestroy(state.ptx_module));
-    OPTIX_CHECK(optixDeviceContextDestroy(state.context));
+    RENDERTOY3O_OPTIX_CHECK(optixPipelineDestroy(state.pipeline));
+    RENDERTOY3O_OPTIX_CHECK(optixProgramGroupDestroy(state.raygen_prog_group));
+    RENDERTOY3O_OPTIX_CHECK(optixProgramGroupDestroy(state.radiance_miss_group));
+    RENDERTOY3O_OPTIX_CHECK(optixProgramGroupDestroy(state.radiance_hit_group));
+    RENDERTOY3O_OPTIX_CHECK(optixModuleDestroy(state.ptx_module));
+    RENDERTOY3O_OPTIX_CHECK(optixDeviceContextDestroy(state.context));
 
-    CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.sbt.raygenRecord)));
-    CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.sbt.missRecordBase)));
-    CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.sbt.hitgroupRecordBase)));
+    RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.sbt.raygenRecord)));
+    RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.sbt.missRecordBase)));
+    RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.sbt.hitgroupRecordBase)));
     // TODO: Memory leak.
-    // CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.d_vertices)));
-    // CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.d_gas_output_buffer)));
-    CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.params.accum_buffer)));
-    CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.d_params)));
+    // RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.d_vertices)));
+    // RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.d_gas_output_buffer)));
+    RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.params.accum_buffer)));
+    RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.d_params)));
 }
 
 //------------------------------------------------------------------------------
@@ -1067,7 +1068,8 @@ int main(int argc, char *argv[])
     //
     // Set up OptiX state
     //
-    std::tie(g_meshes, g_textures) = wavefront::loadOBJ({"/home/tianyu/1.obj", "/home/tianyu/2.obj"});
+    // std::tie(g_meshes, g_textures) = wavefront::loadOBJ({"/home/tianyu/1.obj", "/home/tianyu/2.obj"});
+    std::tie(g_meshes, g_textures) = rendertoy3o::loadOBJ({"/home/tianyu/1.obj"});
     // std::tie(g_meshes, g_textures) = wavefront::loadOBJ({"/run/media/tianyu/hdd0-3d-wksp/testmodels/motion.obj"/*, "/run/media/tianyu/hdd0-3d-wksp/testmodels/motion0002.obj"*/});
 
     // 创建CUDA和OptiX上下文
@@ -1111,7 +1113,7 @@ int main(int argc, char *argv[])
                 state.params.height);
 
             output_buffer.setStream(state.stream);
-            wavefront::GLDisplay gl_display;
+            rendertoy3o::GLDisplay gl_display;
 
             std::chrono::duration<double> state_update_time(0.0);
             std::chrono::duration<double> render_time(0.0);

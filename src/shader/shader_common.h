@@ -4,7 +4,7 @@
 #include "random.h"
 #include "shader_data.h"
 
-namespace wavefront {
+namespace rendertoy3o {
 
 //------------------------------------------------------------------------------
 //

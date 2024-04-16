@@ -7,7 +7,7 @@
 #include "wavefront.h"
 #include "material.h"
 
-namespace wavefront {
+namespace rendertoy3o {
 
 struct Mesh
 {
@@ -29,4 +29,4 @@ struct Texture
 
 std::tuple<std::vector<Mesh>, std::vector<Texture> > loadOBJ(const std::vector<std::string> &path);
 
-} // namespace wavefront
+} // namespace rendertoy3o

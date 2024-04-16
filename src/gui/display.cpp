@@ -3,7 +3,7 @@
 
 #include <iostream>
 
-namespace wavefront
+namespace rendertoy3o
 {
 
     namespace
@@ -270,4 +270,4 @@ void main()
         GL_CHECK_ERRORS();
     }
 
-} // namespace wavefront
+} // namespace rendertoy3o

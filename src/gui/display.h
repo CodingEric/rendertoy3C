@@ -8,7 +8,7 @@
 #include <sutil/sutil.h>
 #include <sutil/sutilapi.h>
 
-namespace wavefront
+namespace rendertoy3o
 {
 
 class GLDisplay
@@ -36,4 +36,4 @@ private:
     static const std::string s_frag_source;
 };
 
-} // namespace wavefront
+} // namespace rendertoy3o

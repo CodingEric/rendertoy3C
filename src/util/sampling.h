@@ -3,7 +3,7 @@
 #include <src/wavefront.h>
 #include <src/util/math.h>
 
-namespace wavefront {
+namespace rendertoy3o {
 
 WAVEFRONT_CPU_GPU_INLINE
 float2 SampleUniformDiskConcentric(float2 u) {

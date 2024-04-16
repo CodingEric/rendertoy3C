@@ -3,7 +3,7 @@
 #include "wavefront.h"
 #include "random.h"
 
-namespace wavefront {
+namespace rendertoy3o {
 
 enum class LightType
 {
@@ -60,4 +60,4 @@ struct Light
     }
 };
 
-} // namespace wavefront
+} // namespace rendertoy3o

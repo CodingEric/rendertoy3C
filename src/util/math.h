@@ -2,7 +2,7 @@
 
 #include <src/wavefront.h>
 
-namespace wavefront {
+namespace rendertoy3o {
 
 WAVEFRONT_CPU_GPU_INLINE
 float safeSqrt(float x) {

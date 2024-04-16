@@ -12,7 +12,7 @@
 struct Compare
 {
     inline bool operator()(const tinyobj::index_t &a,
-                           const tinyobj::index_t &b)
+                           const tinyobj::index_t &b) const
     {
         if (a.vertex_index < b.vertex_index)
             return true;
@@ -33,7 +33,7 @@ struct Compare
     }
 };
 
-std::tuple<std::vector<wavefront::Mesh>, std::vector<wavefront::Texture>> wavefront::loadOBJ(const std::vector<std::string> &paths)
+std::tuple<std::vector<rendertoy3o::Mesh>, std::vector<rendertoy3o::Texture>> rendertoy3o::loadOBJ(const std::vector<std::string> &paths)
 {
     const auto key_frames = paths.size();
     std::vector<tinyobj::ObjReader> readers;
@@ -56,8 +56,8 @@ std::tuple<std::vector<wavefront::Mesh>, std::vector<wavefront::Texture>> wavefr
     auto &shapes = readers[0].GetShapes();
     auto &materials = readers[0].GetMaterials();
 
-    std::vector<wavefront::Mesh> ret_mesh = {};
-    std::vector<wavefront::Texture> ret_texture = {};
+    std::vector<rendertoy3o::Mesh> ret_mesh = {};
+    std::vector<rendertoy3o::Texture> ret_texture = {};
 
     for (const auto &shape : shapes)
     {
@@ -71,7 +71,7 @@ std::tuple<std::vector<wavefront::Mesh>, std::vector<wavefront::Texture>> wavefr
         {
             std::map<tinyobj::index_t, int, Compare> knownVertices;
             std::map<std::string, int> knownTextures;
-            wavefront::Mesh mesh = {};
+            rendertoy3o::Mesh mesh = {};
             mesh.vertices.resize(key_frames);
             mesh.normals.resize(key_frames);
             mesh.texcoords.resize(key_frames);
@@ -138,7 +138,7 @@ std::tuple<std::vector<wavefront::Mesh>, std::vector<wavefront::Texture>> wavefr
                 if (image)
                 {
                     textureID = ret_texture.size();
-                    wavefront::Texture tex;
+                    rendertoy3o::Texture tex;
                     tex.resolution = res;
                     tex.pixel.resize(res.x * res.y);
                     auto imagePixelView = (uint32_t *)image;
