@@ -19,6 +19,8 @@ OPTIX_add_sample_executable( optixPathTracer target_name
   cuda_mesh.cpp
   cuda_buffer.h
   cuda_buffer.cpp
+  cuda_texture.h
+  cuda_array.h
   
   util/sampling.h
   util/math.h
