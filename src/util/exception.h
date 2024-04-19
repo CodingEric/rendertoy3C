@@ -1,10 +1,10 @@
 #pragma once
 
 #include <cuda.h>
-#include <driver_types.h>
 #include <cuda_runtime_api.h>
-
+#include <driver_types.h>
 #include <optix.h>
+
 #include <stdexcept>
 #include <sstream>
 
@@ -43,6 +43,19 @@ namespace rendertoy3o
             return out.str();
         }
     };
+
+    inline void cudaCheck(CUresult result, const char *call, const char *file, unsigned int line)
+    {
+        if(result != CUresult::CUDA_SUCCESS)
+        {
+            std::stringstream ss;
+            const char *error_str;
+            cuGetErrorString(result, &error_str);
+            ss << "CUDA call (" << call << " ) failed with error: '"
+               << error_str << "' (" << file << ":" << line << ")\n";
+            throw Exception(ss.str().c_str());
+        }
+    }
 
     inline void cudaCheck(cudaError_t error, const char *call, const char *file, unsigned int line)
     {

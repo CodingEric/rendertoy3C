@@ -154,7 +154,7 @@ if(WIN32)
 endif()
 
 # Find at least a 5.0 version of CUDA.
-find_package(CUDA 5.0 REQUIRED)
+find_package(CUDA 12.1 REQUIRED)
 
 # If NVRTC was enabled/disabled, reset OPTIXIR/PTX to default
 set( CUDA_NVRTC_ENABLED OFF CACHE BOOL "Use NVRTC to compile OPTIXIR/PTX at run-time instead of NVCC at build-time" )

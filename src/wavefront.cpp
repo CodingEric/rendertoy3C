@@ -26,6 +26,9 @@
 #include "light.h"
 #include "gui/display.h"
 #include "util/exception.h"
+#include "cuda_buffer.h"
+#include "cuda_texture.h"
+#include "cuda_mesh.h"
 
 #include <array>
 #include <cstring>
@@ -82,20 +85,17 @@ struct Instance
     float transform[12];
 };
 
+using namespace rendertoy3o;
+
 struct PathTracerState
 {
     OptixDeviceContext context = 0;
 
-    std::vector<OptixTraversableHandle> gas_handle = {}; // Traversable handle for triangle AS
     std::vector<OptixTraversableHandle> gas_motion_handle = {};
-    std::vector<CUdeviceptr> d_gas_output_buffer = {}; // Triangle AS memory
-    std::vector<CUdeviceptr> d_vertices = {};
-    std::vector<CUdeviceptr> d_indices = {};
-    std::vector<CUdeviceptr> d_normals = {};
-    std::vector<CUdeviceptr> d_texcoords = {};
 
-    std::vector<cudaArray_t> textureArrays = {};
-    std::vector<cudaTextureObject_t> textureObjects = {};
+    std::vector<std::unique_ptr<CUDAMesh>> d_meshes = {};
+
+    std::vector<std::shared_ptr<CUDATexture<uchar4>>> textures = {};
 
     std::vector<CUdeviceptr> motion_transform = {};
 
@@ -368,145 +368,13 @@ void buildMeshAccel(PathTracerState &state)
 {
     // 多mesh的注意事项：
     // 需要使用多组 OptixBuildInput、多组 d_vertices 和多组 d_indices。
-    state.d_vertices.resize(g_meshes.size());
-    state.d_indices.resize(g_meshes.size());
-    state.d_normals.resize(g_meshes.size());
-    state.d_texcoords.resize(g_meshes.size());
-    state.gas_handle.resize(g_meshes.size());
-    state.d_gas_output_buffer.resize(g_meshes.size());
     state.motion_transform.resize(g_meshes.size());
     state.gas_motion_handle.resize(g_meshes.size());
 
     for (size_t i = 0; i < g_meshes.size(); ++i)
     {
         const auto &mesh = g_meshes[i];
-
-        // 几何变形运动模糊：vertexBuffers存储的大小变为mesh.vertices.size() * NUM_KEYS。
-        const size_t per_keyframe_vertices_size_in_bytes = mesh.vertices[0].size() * sizeof(float3);
-        RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_vertices[i]), mesh.vertices.size() * per_keyframe_vertices_size_in_bytes));
-        for (unsigned int j = 0; j < mesh.num_keys; ++j)
-        {
-            RENDERTOY3O_CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.d_vertices[i] + j * per_keyframe_vertices_size_in_bytes), &mesh.vertices[j][0], per_keyframe_vertices_size_in_bytes, cudaMemcpyHostToDevice));
-        }
-        // 几何变形运动模糊：在这一部分之后创建一个CUDeviceptr数组，将上述申请的mesh.vertices.size() * NUM_KEYS内存空间分成若干个区块。然后将这个CUDeviceptr传入triangleArray.vertexBuffers。
-        std::vector<CUdeviceptr> vertices_per_key(mesh.num_keys);
-        for (unsigned int j = 0; j < mesh.num_keys; ++j)
-        {
-            vertices_per_key[j] = state.d_vertices[i] + j * per_keyframe_vertices_size_in_bytes;
-        }
-
-        const size_t indices_size_in_bytes = mesh.indices.size() * sizeof(int3);
-        RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_indices[i]), indices_size_in_bytes));
-        RENDERTOY3O_CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.d_indices[i]), mesh.indices.data(), indices_size_in_bytes, cudaMemcpyHostToDevice));
-
-        const size_t per_keyframe_normals_size_in_bytes = mesh.normals[0].size() * sizeof(float3);
-        RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_normals[i]), mesh.normals.size() * per_keyframe_normals_size_in_bytes));
-        for (unsigned int j = 0; j < mesh.num_keys; ++j)
-        {
-            RENDERTOY3O_CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.d_normals[i] + j * per_keyframe_normals_size_in_bytes), &mesh.normals[j][0], per_keyframe_normals_size_in_bytes, cudaMemcpyHostToDevice));
-        }
-
-        const size_t per_keyframe_texcoords_size_in_bytes = mesh.texcoords[0].size() * sizeof(float2);
-        RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_texcoords[i]), mesh.texcoords.size() * per_keyframe_texcoords_size_in_bytes));
-        for (unsigned int j = 0; j < mesh.num_keys; ++j)
-        {
-            RENDERTOY3O_CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.d_texcoords[i] + j * per_keyframe_texcoords_size_in_bytes), &mesh.texcoords[j][0], per_keyframe_texcoords_size_in_bytes, cudaMemcpyHostToDevice));
-        }
-
-        OptixBuildInput triangleInput{};
-        triangleInput.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
-
-        triangleInput.triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
-        triangleInput.triangleArray.vertexStrideInBytes = sizeof(float3);
-        triangleInput.triangleArray.numVertices = static_cast<uint32_t>(mesh.vertices[0].size());
-        triangleInput.triangleArray.vertexBuffers = vertices_per_key.data();
-
-        triangleInput.triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
-        triangleInput.triangleArray.indexStrideInBytes = sizeof(int3);
-        triangleInput.triangleArray.numIndexTriplets = (int)mesh.indices.size();
-        triangleInput.triangleArray.indexBuffer = state.d_indices[i];
-
-        // triangleInputFlags[i] = 0;
-        uint32_t triangleInputFlag = 0;
-        triangleInput.triangleArray.flags = &triangleInputFlag;
-        triangleInput.triangleArray.numSbtRecords = 1;
-        triangleInput.triangleArray.sbtIndexOffsetBuffer = 0;
-        triangleInput.triangleArray.sbtIndexOffsetSizeInBytes = 0;
-        triangleInput.triangleArray.sbtIndexOffsetStrideInBytes = 0;
-
-        // 加速结构设置
-        OptixAccelBuildOptions accel_options = {};
-        accel_options.buildFlags = OPTIX_BUILD_FLAG_ALLOW_COMPACTION; // 这是加速结构压缩必须的第1个要求
-        accel_options.operation = OPTIX_BUILD_OPERATION_BUILD;
-        accel_options.motionOptions.numKeys = mesh.num_keys;
-        accel_options.motionOptions.timeBegin = 0.0f;
-        accel_options.motionOptions.timeEnd = 1.0f;
-        accel_options.motionOptions.flags = OPTIX_MOTION_FLAG_NONE;
-
-        // 计算加速结构在GPU上[将要]占用的显示内存大小。OptixAccelBufferSizes是一个结构体，内部含有三个参量。这里由于没有更新BVH，所以仅仅采用前两个变量。
-        OptixAccelBufferSizes gas_buffer_sizes;
-        RENDERTOY3O_OPTIX_CHECK(optixAccelComputeMemoryUsage(
-            state.context,
-            &accel_options,
-            &triangleInput,
-            1, // num_build_inputs
-            &gas_buffer_sizes));
-
-        // 在设备上申请临时存储空间。
-        CUdeviceptr d_temp_buffer;
-        RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_temp_buffer), gas_buffer_sizes.tempSizeInBytes));
-
-        // non-compacted output
-        // 在设备上申请输出内存空间。
-        CUdeviceptr d_buffer_temp_output_gas_and_compacted_size;
-        size_t compactedSizeOffset = roundUp<size_t>(gas_buffer_sizes.outputSizeInBytes, 8ull);
-        RENDERTOY3O_CUDA_CHECK(cudaMalloc(
-            reinterpret_cast<void **>(&d_buffer_temp_output_gas_and_compacted_size),
-            compactedSizeOffset + 8));
-
-        // 配置加速结构构建器以支持大小压缩。
-        OptixAccelEmitDesc emitProperty = {};
-        emitProperty.type = OPTIX_PROPERTY_TYPE_COMPACTED_SIZE; // 这是加速结构压缩必须的第2个要求
-        emitProperty.result = (CUdeviceptr)((char *)d_buffer_temp_output_gas_and_compacted_size + compactedSizeOffset);
-
-        // 执行加速结构构建。
-        // 注意在这个构建过程中并没有对BVH进行压缩。
-        // 但是这一个过程会计算对BVH压缩以后的大小并且发射到emitProperty中。
-        RENDERTOY3O_OPTIX_CHECK(optixAccelBuild(
-            state.context,
-            0, // CUDA stream
-            &accel_options,
-            &triangleInput,
-            1, // num build inputs
-            d_temp_buffer,
-            gas_buffer_sizes.tempSizeInBytes,
-            d_buffer_temp_output_gas_and_compacted_size,
-            gas_buffer_sizes.outputSizeInBytes,
-            &state.gas_handle[i],
-            &emitProperty, // emitted property list
-            1              // num emitted properties
-            ));
-
-        RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(d_temp_buffer)));
-        // RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(d_mat_indices)));
-
-        size_t compacted_gas_size;
-        RENDERTOY3O_CUDA_CHECK(cudaMemcpy(&compacted_gas_size, (void *)emitProperty.result, sizeof(size_t), cudaMemcpyDeviceToHost));
-
-        // 这是技术手册要求的在CPU上执行的判断，因为BVH压缩过程可能在极端情况下导致结果变差。
-        if (compacted_gas_size < gas_buffer_sizes.outputSizeInBytes)
-        {
-            RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_gas_output_buffer[i]), compacted_gas_size));
-
-            // use handle as input and output
-            RENDERTOY3O_OPTIX_CHECK(optixAccelCompact(state.context, 0, state.gas_handle[i], state.d_gas_output_buffer[i], compacted_gas_size, &state.gas_handle[i]));
-
-            RENDERTOY3O_CUDA_CHECK(cudaFree((void *)d_buffer_temp_output_gas_and_compacted_size));
-        }
-        else
-        {
-            state.d_gas_output_buffer[i] = d_buffer_temp_output_gas_and_compacted_size;
-        }
+        state.d_meshes.push_back(std::make_unique<CUDAMesh>(state.context, mesh));
 
         // {
         //     const float motion_matrix_keys[2][12] =
@@ -553,13 +421,13 @@ void buildInstanceAccel(PathTracerState &state)
     std::vector<OptixInstance> optix_instances(g_meshes.size());
     const size_t instance_size_in_bytes = sizeof(OptixInstance);
 
-    for(size_t i = 0; i < g_meshes.size(); ++i)
+    for (size_t i = 0; i < g_meshes.size(); ++i)
     {
         optix_instances[i].flags = OPTIX_INSTANCE_FLAG_NONE;
         optix_instances[i].instanceId = 0;
         optix_instances[i].sbtOffset = i;
         optix_instances[i].visibilityMask = 1;
-        optix_instances[i].traversableHandle = state.gas_handle[i];
+        optix_instances[i].traversableHandle = state.d_meshes[i]->gas_handle();
         memcpy(optix_instances[i].transform, instance.transform, sizeof(float) * 12);
     }
 
@@ -819,46 +687,19 @@ void createTexture(PathTracerState &state)
 {
     int numTextures = g_textures.size();
 
-    state.textureArrays.resize(numTextures);
-    state.textureObjects.resize(numTextures);
+    // state.textureArrays.resize(numTextures);
+    // state.textureObjects.resize(numTextures);
+    state.textures.resize(numTextures);
 
     for (int i = 0; i < numTextures; ++i)
     {
         auto texture = g_textures[i];
 
-        cudaResourceDesc resDesc = {};
-
-        cudaChannelFormatDesc channel_desc;
-        int32_t width = texture.resolution.x;
-        int32_t height = texture.resolution.y;
-        int32_t numComponents = 4; // 和导入机构是对应的
-        int32_t pitch = width * numComponents * sizeof(uint8_t);
-        channel_desc = cudaCreateChannelDesc<uchar4>();
-
-        cudaArray_t &pixelArray = state.textureArrays[i];
-        RENDERTOY3O_CUDA_CHECK(cudaMallocArray(&pixelArray, &channel_desc, width, height));
-
-        RENDERTOY3O_CUDA_CHECK(cudaMemcpy2DToArray(pixelArray, 0, 0, texture.pixel.data(), pitch, pitch, height, cudaMemcpyHostToDevice));
-
-        resDesc.resType = cudaResourceTypeArray;
-        resDesc.res.array.array = pixelArray;
-
-        cudaTextureDesc texDesc = {};
-        texDesc.addressMode[0] = cudaAddressModeWrap;
-        texDesc.addressMode[1] = cudaAddressModeWrap;
-        texDesc.filterMode = cudaFilterModeLinear;
-        texDesc.readMode = cudaReadModeNormalizedFloat;
-        texDesc.normalizedCoords = 1;
-        texDesc.maxAnisotropy = 1;
-        texDesc.maxMipmapLevelClamp = 99;
-        texDesc.minMipmapLevelClamp = 0;
-        texDesc.mipmapFilterMode = cudaFilterModePoint;
-        texDesc.borderColor[0] = 1.0f;
-        texDesc.sRGB = 0;
-
-        cudaTextureObject_t cudaTex = 0;
-        RENDERTOY3O_CUDA_CHECK(cudaCreateTextureObject(&cudaTex, &resDesc, &texDesc, nullptr));
-        state.textureObjects[i] = cudaTex;
+        state.textures[i] = std::make_shared<CUDATexture<uchar4>>(texture.resolution.x,
+                                                                  texture.resolution.y,
+                                                                  texture.pixel.data(),
+                                                                  CUDATexture<uchar4>::AddressMode::Wrap,
+                                                                  CUDATexture<uchar4>::FilterMode::Linear);
     }
 }
 
@@ -932,7 +773,7 @@ void createSBT(PathTracerState &state)
         if (g_meshes[i].material.m_diffuseTextureID != -1)
         {
             record.data.hasTexture = true;
-            record.data.texture = state.textureObjects[g_meshes[i].material.m_diffuseTextureID];
+            record.data.texture = state.textures[g_meshes[i].material.m_diffuseTextureID]->texture_object();
         }
         else
         {
@@ -940,10 +781,10 @@ void createSBT(PathTracerState &state)
             record.data.diffuse_color = g_meshes[i].material.m_diffuse;
         }
         record.data.emission_color = g_meshes[i].material.m_emissive;
-        record.data.vertices = reinterpret_cast<float3 *>(state.d_vertices[i]);
-        record.data.indices = reinterpret_cast<int3 *>(state.d_indices[i]);
-        record.data.normals = reinterpret_cast<float3 *>(state.d_normals[i]);
-        record.data.texcoords = reinterpret_cast<float2 *>(state.d_texcoords[i]);
+        record.data.vertices = reinterpret_cast<float3 *>(state.d_meshes[i]->vertex_buffer().buffer_ptr());
+        record.data.indices = reinterpret_cast<int3 *>(state.d_meshes[i]->index_buffer().buffer_ptr());
+        record.data.normals = reinterpret_cast<float3 *>(state.d_meshes[i]->normal_buffer().buffer_ptr());
+        record.data.texcoords = reinterpret_cast<float2 *>(state.d_meshes[i]->texcoord_buffer().buffer_ptr());
         hitGroupRecords.push_back(record);
     }
 
@@ -996,9 +837,6 @@ void cleanupState(PathTracerState &state)
     RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.sbt.raygenRecord)));
     RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.sbt.missRecordBase)));
     RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.sbt.hitgroupRecordBase)));
-    // TODO: Memory leak.
-    // RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.d_vertices)));
-    // RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.d_gas_output_buffer)));
     RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.params.accum_buffer)));
     RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.d_params)));
 }
@@ -1069,7 +907,7 @@ int main(int argc, char *argv[])
     // Set up OptiX state
     //
     // std::tie(g_meshes, g_textures) = wavefront::loadOBJ({"/home/tianyu/1.obj", "/home/tianyu/2.obj"});
-    std::tie(g_meshes, g_textures) = rendertoy3o::loadOBJ({"/home/tianyu/1.obj"});
+    std::tie(g_meshes, g_textures) = rendertoy3o::loadOBJ({"/home/tianyu/mat_test.obj"});
     // std::tie(g_meshes, g_textures) = wavefront::loadOBJ({"/run/media/tianyu/hdd0-3d-wksp/testmodels/motion.obj"/*, "/run/media/tianyu/hdd0-3d-wksp/testmodels/motion0002.obj"*/});
 
     // 创建CUDA和OptiX上下文
