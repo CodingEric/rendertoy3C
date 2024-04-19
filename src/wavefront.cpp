@@ -29,6 +29,7 @@
 #include "cuda_buffer.h"
 #include "cuda_texture.h"
 #include "cuda_mesh.h"
+#include "cuda_accel.h"
 
 #include <array>
 #include <cstring>
@@ -118,8 +119,9 @@ struct PathTracerState
     OptixShaderBindingTable sbt = {};
 
     // 以下变量用于 Instance AS 的管理。
-    CUdeviceptr ias_output_buffer;
-    CUdeviceptr ias_handle;
+    // CUdeviceptr ias_output_buffer;
+    // CUdeviceptr ias_handle;
+    CUDAAccel accel;
 };
 
 //------------------------------------------------------------------------------
@@ -240,7 +242,7 @@ void initLaunchParams(PathTracerState &state)
 
     state.params.samples_per_launch = samples_per_launch;
     state.params.subframe_index = 0u;
-    state.params.handle = state.ias_handle;
+    state.params.handle = state.accel.ias_handle();
 
     RENDERTOY3O_CUDA_CHECK(cudaStreamCreate(&state.stream));
     RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_params), sizeof(rendertoy3o::Params)));
@@ -417,75 +419,12 @@ void buildMeshAccel(PathTracerState &state)
 
 void buildInstanceAccel(PathTracerState &state)
 {
-    Instance instance = {{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0}}; // 4x3
-    std::vector<OptixInstance> optix_instances(g_meshes.size());
-    const size_t instance_size_in_bytes = sizeof(OptixInstance);
-
-    for (size_t i = 0; i < g_meshes.size(); ++i)
+    float transformation[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+    for(const auto &mesh : state.d_meshes)
     {
-        optix_instances[i].flags = OPTIX_INSTANCE_FLAG_NONE;
-        optix_instances[i].instanceId = 0;
-        optix_instances[i].sbtOffset = i;
-        optix_instances[i].visibilityMask = 1;
-        optix_instances[i].traversableHandle = state.d_meshes[i]->gas_handle();
-        memcpy(optix_instances[i].transform, instance.transform, sizeof(float) * 12);
+        state.accel.append_instance(*mesh, transformation);
     }
-
-    CUdeviceptr d_instances;
-    RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_instances), instance_size_in_bytes * g_meshes.size()));
-    RENDERTOY3O_CUDA_CHECK(cudaMemcpy(
-        reinterpret_cast<void *>(d_instances),
-        optix_instances.data(),
-        instance_size_in_bytes * g_meshes.size(),
-        cudaMemcpyHostToDevice));
-
-    OptixBuildInput instance_input = {};
-    instance_input.type = OPTIX_BUILD_INPUT_TYPE_INSTANCES;
-    instance_input.instanceArray.instances = d_instances;
-    instance_input.instanceArray.numInstances = g_meshes.size();
-
-    OptixAccelBuildOptions accel_options = {};
-    accel_options.buildFlags = OPTIX_BUILD_FLAG_NONE;
-    accel_options.operation = OPTIX_BUILD_OPERATION_BUILD;
-
-    // accel_options.motionOptions.numKeys   = 2;
-    // accel_options.motionOptions.timeBegin = 0.0f;
-    // accel_options.motionOptions.timeEnd   = 1.0f;
-    // accel_options.motionOptions.flags     = OPTIX_MOTION_FLAG_NONE;
-
-    OptixAccelBufferSizes ias_buffer_sizes;
-    RENDERTOY3O_OPTIX_CHECK(optixAccelComputeMemoryUsage(
-        state.context,
-        &accel_options,
-        &instance_input,
-        1, // num build inputs
-        &ias_buffer_sizes));
-
-    CUdeviceptr d_temp_buffer;
-    RENDERTOY3O_CUDA_CHECK(cudaMalloc(
-        reinterpret_cast<void **>(&d_temp_buffer),
-        ias_buffer_sizes.tempSizeInBytes));
-    RENDERTOY3O_CUDA_CHECK(cudaMalloc(
-        reinterpret_cast<void **>(&state.ias_output_buffer),
-        ias_buffer_sizes.outputSizeInBytes));
-
-    RENDERTOY3O_OPTIX_CHECK(optixAccelBuild(
-        state.context,
-        0, // CUDA stream
-        &accel_options,
-        &instance_input,
-        1, // num build inputs
-        d_temp_buffer,
-        ias_buffer_sizes.tempSizeInBytes,
-        state.ias_output_buffer,
-        ias_buffer_sizes.outputSizeInBytes,
-        &state.ias_handle,
-        nullptr, // emitted property list
-        0        // num emitted properties
-        ));
-
-    RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(d_temp_buffer)));
-    RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(d_instances)));
+    state.accel.build(state.context);
 }
 
 /// @brief 使用含有各个pipeline的cu文件创建OptiX模块
