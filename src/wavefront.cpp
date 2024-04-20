@@ -26,11 +26,11 @@
 #include "light.h"
 #include "gui/display.h"
 #include "util/exception.h"
-#include "cuda_buffer.h"
-#include "cuda_texture.h"
-#include "cuda_mesh.h"
-#include "cuda_accel.h"
-#include "optix_context.h"
+#include "cuda/cuda_buffer.h"
+#include "cuda/cuda_texture.h"
+#include "cuda/cuda_mesh.h"
+#include "cuda/cuda_accel.h"
+#include "cuda/optix_context.h"
 
 #include <array>
 #include <cstring>
@@ -91,11 +91,8 @@ using namespace rendertoy3o;
 
 struct PathTracerState
 {
-    // OptixDeviceContext context = 0;
-
     std::vector<OptixTraversableHandle> gas_motion_handle = {};
 
-    // std::vector<std::unique_ptr<CUDAMesh>> d_meshes = {};
     std::vector<CUDAMesh> d_meshes = {};
 
     std::vector<std::shared_ptr<CUDATexture<uchar4>>> textures = {};
@@ -110,9 +107,6 @@ struct PathTracerState
 
     OptixShaderBindingTable sbt = {};
 
-    // 以下变量用于 Instance AS 的管理。
-    // CUdeviceptr ias_output_buffer;
-    // CUdeviceptr ias_handle;
     CUDAAccel accel;
 };
 
@@ -402,15 +396,10 @@ void buildInstanceAccel(PathTracerState &state)
 void createTexture(PathTracerState &state)
 {
     int numTextures = g_textures.size();
-
-    // state.textureArrays.resize(numTextures);
-    // state.textureObjects.resize(numTextures);
     state.textures.resize(numTextures);
-
     for (int i = 0; i < numTextures; ++i)
     {
         auto texture = g_textures[i];
-
         state.textures[i] = std::make_shared<CUDATexture<uchar4>>(texture.resolution.x,
                                                                   texture.resolution.y,
                                                                   texture.pixel.data(),
@@ -430,14 +419,12 @@ void buildLightSampler(PathTracerState &state)
         {
             continue;
         }
-
         for (const int3 &triangleIndex : mesh.indices)
         {
             rendertoy3o::Light light = rendertoy3o::Light(mesh.material.m_emissive, mesh.vertices[0][triangleIndex.x], mesh.vertices[0][triangleIndex.y], mesh.vertices[0][triangleIndex.z]);
             lights.push_back(light);
         }
     }
-
     state.params.light_count = lights.size();
     RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.params.lights), lights.size() * sizeof(rendertoy3o::Light)));
     RENDERTOY3O_CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.params.lights), lights.data(), lights.size() * sizeof(rendertoy3o::Light), cudaMemcpyHostToDevice));
@@ -543,9 +530,7 @@ void createSBT(PathTracerState &state)
 
 void cleanupState(PathTracerState &state)
 {
-
     RENDERTOY3O_OPTIX_CHECK(optixDeviceContextDestroy(state.optix_context.ctx()));
-
     RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.sbt.raygenRecord)));
     RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.sbt.missRecordBase)));
     RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.sbt.hitgroupRecordBase)));

@@ -5,7 +5,7 @@
 #include <vector>
 #include <cstring>
 
-#include "util/exception.h"
+#include <src/util/exception.h>
 #include "cuda_mesh.h"
 
 namespace rendertoy3o

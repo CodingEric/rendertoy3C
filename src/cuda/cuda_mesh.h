@@ -1,7 +1,7 @@
 #pragma once
 
 #include "cuda_buffer.h"
-#include "mesh.h"
+#include <src/mesh.h>
 
 namespace rendertoy3o
 {

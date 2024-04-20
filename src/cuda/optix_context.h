@@ -8,9 +8,9 @@
 #include <iostream>
 #include <iomanip>
 
-#include "util/exception.h"
+#include <src/util/exception.h>
 
-#include "shader/shader_data.h" // Is it good?
+#include <src/shader/shader_data.h> // Is it good?
 
 namespace rendertoy3o
 {
