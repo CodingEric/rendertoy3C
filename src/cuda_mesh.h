@@ -19,7 +19,17 @@ namespace rendertoy3o
 
     public:
         CUDAMesh(const CUDAMesh &) = delete;
-        CUDAMesh(const CUDAMesh &&) = delete;
+        CUDAMesh(CUDAMesh &&other) : _vertex_buffer{std::move(other._vertex_buffer)},
+                                     _index_buffer{std::move(other._index_buffer)},
+                                     _normal_buffer{std::move(other._normal_buffer)},
+                                     _texcoord_buffer{std::move(other._texcoord_buffer)},
+                                     _vertices_per_key{std::move(other._vertices_per_key)},
+                                     _gas_handle{other._gas_handle},
+                                     _gas_output_buffer{other._gas_output_buffer}
+        {
+            other._gas_handle = 0u;
+            other._gas_output_buffer = 0u;
+        }
         CUDAMesh(OptixDeviceContext ctx, const Mesh &mesh) : _vertex_buffer{CUDABuffer<float3>(mesh.vertices[0].size())}, // TODO: more explicit representation
                                                              _index_buffer{CUDABuffer<int3>(mesh.indices.size())},
                                                              _normal_buffer{CUDABuffer<float3>(mesh.normals[0].size())},
@@ -145,7 +155,7 @@ namespace rendertoy3o
         }
         ~CUDAMesh()
         {
-            RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(_gas_output_buffer)));
+            if(_gas_output_buffer) { RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(_gas_output_buffer))); }
         }
 
     public:

@@ -30,6 +30,7 @@
 #include "cuda_texture.h"
 #include "cuda_mesh.h"
 #include "cuda_accel.h"
+#include "optix_context.h"
 
 #include <array>
 #include <cstring>
@@ -90,27 +91,18 @@ using namespace rendertoy3o;
 
 struct PathTracerState
 {
-    OptixDeviceContext context = 0;
+    // OptixDeviceContext context = 0;
 
     std::vector<OptixTraversableHandle> gas_motion_handle = {};
 
-    std::vector<std::unique_ptr<CUDAMesh>> d_meshes = {};
+    // std::vector<std::unique_ptr<CUDAMesh>> d_meshes = {};
+    std::vector<CUDAMesh> d_meshes = {};
 
     std::vector<std::shared_ptr<CUDATexture<uchar4>>> textures = {};
 
     std::vector<CUdeviceptr> motion_transform = {};
 
-    OptixModule ptx_module = 0;
-    OptixModule ptx_miss_module = 0;
-    OptixModule ptx_closehit = 0;
-    OptixModule ptx_test = 0;
-    OptixPipelineCompileOptions pipeline_compile_options = {};
-    OptixPipeline pipeline = 0;
-
-    OptixProgramGroup raygen_prog_group = 0;
-    OptixProgramGroup radiance_miss_group = 0;
-    OptixProgramGroup radiance_hit_group = 0;
-    OptixProgramGroup callable_test_group = 0;
+    OptixContext optix_context;
 
     CUstream stream = 0;
     rendertoy3o::Params params;
@@ -295,7 +287,7 @@ void launchSubframe(sutil::CUDAOutputBuffer<uchar4> &output_buffer, PathTracerSt
         cudaMemcpyHostToDevice, state.stream));
 
     RENDERTOY3O_OPTIX_CHECK(optixLaunch(
-        state.pipeline,
+        state.optix_context.pipeline(),
         state.stream,
         reinterpret_cast<CUdeviceptr>(state.d_params),
         sizeof(rendertoy3o::Params),
@@ -344,26 +336,6 @@ void initCameraState()
     trackball.setGimbalLock(true);
 }
 
-void createContext(PathTracerState &state)
-{
-    // Initialize CUDA
-    RENDERTOY3O_CUDA_CHECK(cudaFree(0));
-
-    OptixDeviceContext context;
-    CUcontext cu_ctx = 0; // zero means take the current context
-    RENDERTOY3O_OPTIX_CHECK(optixInit());
-    OptixDeviceContextOptions options = {};
-    options.logCallbackFunction = &context_log_cb;
-    options.logCallbackLevel = 4;
-#ifdef DEBUG
-    // This may incur significant performance cost and should only be done during development.
-    options.validationMode = OPTIX_DEVICE_CONTEXT_VALIDATION_MODE_ALL;
-#endif
-    RENDERTOY3O_OPTIX_CHECK(optixDeviceContextCreate(cu_ctx, &options, &context));
-
-    state.context = context;
-}
-
 /// @brief 创建网格加速结构
 /// @param state 全程序状态配置
 void buildMeshAccel(PathTracerState &state)
@@ -376,7 +348,7 @@ void buildMeshAccel(PathTracerState &state)
     for (size_t i = 0; i < g_meshes.size(); ++i)
     {
         const auto &mesh = g_meshes[i];
-        state.d_meshes.push_back(std::make_unique<CUDAMesh>(state.context, mesh));
+        state.d_meshes.push_back(CUDAMesh(state.optix_context.ctx(), mesh));
 
         // {
         //     const float motion_matrix_keys[2][12] =
@@ -407,7 +379,7 @@ void buildMeshAccel(PathTracerState &state)
         //         cudaMemcpyHostToDevice));
 
         //     RENDERTOY3O_OPTIX_CHECK(optixConvertPointerToTraversableHandle(
-        //         state.context,
+        //         state.optix_context.ctx(),
         //         state.motion_transform[i],
         //         OPTIX_TRAVERSABLE_TYPE_MATRIX_MOTION_TRANSFORM,
         //         &state.gas_motion_handle[i])); // 运动模糊：这说明了几何级别变形会生成一个独立于原有gas_handle的新motion_gas_handle。这个handle可以被插入全局handle，也可以被用于TLAS。
@@ -422,204 +394,9 @@ void buildInstanceAccel(PathTracerState &state)
     float transformation[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
     for(const auto &mesh : state.d_meshes)
     {
-        state.accel.append_instance(*mesh, transformation);
+        state.accel.append_instance(mesh, transformation);
     }
-    state.accel.build(state.context);
-}
-
-/// @brief 使用含有各个pipeline的cu文件创建OptiX模块
-/// @param state
-void createModule(PathTracerState &state)
-{
-    OptixPayloadType payloadType = {};
-    // radiance prd
-    // 辐照度payload，这里是文件结构
-    payloadType.numPayloadValues = sizeof(rendertoy3o::radiancePayloadSemantics) / sizeof(rendertoy3o::radiancePayloadSemantics[0]);
-    payloadType.payloadSemantics = rendertoy3o::radiancePayloadSemantics;
-
-    OptixModuleCompileOptions module_compile_options = {};
-#if !defined(NDEBUG)
-    module_compile_options.optLevel = OPTIX_COMPILE_OPTIMIZATION_LEVEL_0;
-    module_compile_options.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_FULL;
-#endif
-    module_compile_options.numPayloadTypes = 1;
-    module_compile_options.payloadTypes = &payloadType;
-
-    state.pipeline_compile_options.usesMotionBlur = true; // 运动模糊：需要将这个选项设置为true。
-    state.pipeline_compile_options.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_LEVEL_INSTANCING;
-    state.pipeline_compile_options.numPayloadValues = 0;
-    state.pipeline_compile_options.numAttributeValues = 2;
-    state.pipeline_compile_options.exceptionFlags = OPTIX_EXCEPTION_FLAG_NONE;
-    state.pipeline_compile_options.pipelineLaunchParamsVariableName = "params";
-    state.pipeline_compile_options.usesPrimitiveTypeFlags = OPTIX_PRIMITIVE_TYPE_FLAGS_TRIANGLE; // 根据文档的指示，如果场景中只包含三角形，那么为了最佳性能，应该启用这个flag。
-
-    size_t inputSize = 0;
-    // 一个非常神奇的发现：这个程序的.cu文件似乎是动态加载的！（应该是加载了被nvcc编译后的结果）
-    const char *input = sutil::getInputData(OPTIX_SAMPLE_NAME, OPTIX_SAMPLE_DIR, "raygen.cu", inputSize);
-
-    RENDERTOY3O_OPTIX_CHECK_LOG(optixModuleCreate(
-        state.context,
-        &module_compile_options,
-        &state.pipeline_compile_options,
-        input,
-        inputSize,
-        LOG, &LOG_SIZE,
-        &state.ptx_module));
-
-    const char *input_miss = sutil::getInputData(OPTIX_SAMPLE_NAME, OPTIX_SAMPLE_DIR, "miss.cu", inputSize);
-
-    RENDERTOY3O_OPTIX_CHECK_LOG(optixModuleCreate(
-        state.context,
-        &module_compile_options,
-        &state.pipeline_compile_options,
-        input_miss,
-        inputSize,
-        LOG, &LOG_SIZE,
-        &state.ptx_miss_module));
-
-    const char *input_closehit = sutil::getInputData(OPTIX_SAMPLE_NAME, OPTIX_SAMPLE_DIR, "closehit_radiance.cu", inputSize);
-
-    RENDERTOY3O_OPTIX_CHECK_LOG(optixModuleCreate(
-        state.context,
-        &module_compile_options,
-        &state.pipeline_compile_options,
-        input_closehit,
-        inputSize,
-        LOG, &LOG_SIZE,
-        &state.ptx_closehit));
-
-    const char *input_test = sutil::getInputData(OPTIX_SAMPLE_NAME, OPTIX_SAMPLE_DIR, "test.cu", inputSize);
-
-    RENDERTOY3O_OPTIX_CHECK_LOG(optixModuleCreate(
-        state.context,
-        &module_compile_options,
-        &state.pipeline_compile_options,
-        input_test,
-        inputSize,
-        LOG, &LOG_SIZE,
-        &state.ptx_test));
-}
-
-/// @brief 创建程序组
-/// @param state
-void createProgramGroups(PathTracerState &state)
-{
-    OptixProgramGroupOptions program_group_options = {};
-
-    {
-        OptixProgramGroupDesc raygen_prog_group_desc = {};
-        raygen_prog_group_desc.kind = OPTIX_PROGRAM_GROUP_KIND_RAYGEN;
-        raygen_prog_group_desc.raygen.module = state.ptx_module;
-        raygen_prog_group_desc.raygen.entryFunctionName = "__raygen__rg";
-
-        RENDERTOY3O_OPTIX_CHECK_LOG(optixProgramGroupCreate(
-            state.context, &raygen_prog_group_desc,
-            1, // num program groups
-            &program_group_options,
-            LOG, &LOG_SIZE,
-            &state.raygen_prog_group));
-    }
-
-    {
-        OptixProgramGroupDesc miss_prog_group_desc = {};
-        miss_prog_group_desc.kind = OPTIX_PROGRAM_GROUP_KIND_MISS;
-        miss_prog_group_desc.miss.module = state.ptx_miss_module;
-        miss_prog_group_desc.miss.entryFunctionName = "__miss__radiance";
-        RENDERTOY3O_OPTIX_CHECK_LOG(optixProgramGroupCreate(
-            state.context, &miss_prog_group_desc,
-            1, // num program groups
-            &program_group_options,
-            LOG, &LOG_SIZE,
-            &state.radiance_miss_group));
-    }
-
-    {
-        OptixProgramGroupDesc hit_prog_group_desc = {};
-        hit_prog_group_desc.kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
-        hit_prog_group_desc.hitgroup.moduleCH = state.ptx_closehit;
-        hit_prog_group_desc.hitgroup.entryFunctionNameCH = "__closesthit__radiance";
-        RENDERTOY3O_OPTIX_CHECK_LOG(optixProgramGroupCreate(
-            state.context,
-            &hit_prog_group_desc,
-            1, // num program groups
-            &program_group_options,
-            LOG, &LOG_SIZE,
-            &state.radiance_hit_group));
-    }
-
-    // TODO: 根据optixProgramGroupCreate的参数可以猜测，传入的OptixProgramGroupDesc可以是一个数组。
-    {
-        OptixProgramGroupDesc callable_prog_group_desc = {};
-        callable_prog_group_desc.kind = OPTIX_PROGRAM_GROUP_KIND_CALLABLES;
-        callable_prog_group_desc.callables.moduleDC = state.ptx_test;
-        callable_prog_group_desc.callables.entryFunctionNameDC = "__direct_callable__test";
-        RENDERTOY3O_OPTIX_CHECK_LOG(optixProgramGroupCreate(
-            state.context,
-            &callable_prog_group_desc,
-            1, // num program groups
-            &program_group_options,
-            LOG, &LOG_SIZE,
-            &state.callable_test_group));
-    }
-}
-
-/// @brief 创建流水线
-/// @param state
-void createPipeline(PathTracerState &state)
-{
-    // Optix程序组
-    OptixProgramGroup program_groups[] =
-        {
-            state.raygen_prog_group,
-            state.radiance_miss_group,
-            state.radiance_hit_group,
-            state.callable_test_group,
-        };
-
-    // 管线设置中，包含了最大追踪递归深度
-    OptixPipelineLinkOptions pipeline_link_options = {};
-    pipeline_link_options.maxTraceDepth = 2;
-
-    RENDERTOY3O_OPTIX_CHECK_LOG(optixPipelineCreate(
-        state.context,
-        &state.pipeline_compile_options,
-        &pipeline_link_options,
-        program_groups,
-        sizeof(program_groups) / sizeof(program_groups[0]),
-        LOG, &LOG_SIZE,
-        &state.pipeline));
-
-    // We need to specify the max traversal depth.  Calculate the stack sizes, so we can specify all
-    // parameters to optixPipelineSetStackSize.
-    // 以下部分都是可选的，用于计算GPU程序栈的大小并且进行程序栈创建。
-    OptixStackSizes stack_sizes = {};
-    RENDERTOY3O_OPTIX_CHECK(optixUtilAccumulateStackSizes(state.raygen_prog_group, &stack_sizes, state.pipeline));
-    RENDERTOY3O_OPTIX_CHECK(optixUtilAccumulateStackSizes(state.radiance_miss_group, &stack_sizes, state.pipeline));
-    RENDERTOY3O_OPTIX_CHECK(optixUtilAccumulateStackSizes(state.radiance_hit_group, &stack_sizes, state.pipeline));
-    RENDERTOY3O_OPTIX_CHECK(optixUtilAccumulateStackSizes(state.callable_test_group, &stack_sizes, state.pipeline));
-
-    uint32_t max_trace_depth = 2;
-    uint32_t max_cc_depth = 0;
-    uint32_t max_dc_depth = 0;
-    uint32_t direct_callable_stack_size_from_traversal;
-    uint32_t direct_callable_stack_size_from_state;
-    uint32_t continuation_stack_size;
-    RENDERTOY3O_OPTIX_CHECK(optixUtilComputeStackSizes(
-        &stack_sizes,
-        max_trace_depth,
-        max_cc_depth,
-        max_dc_depth,
-        &direct_callable_stack_size_from_traversal,
-        &direct_callable_stack_size_from_state,
-        &continuation_stack_size));
-
-    const uint32_t max_traversal_depth = 2;
-    RENDERTOY3O_OPTIX_CHECK(optixPipelineSetStackSize(
-        state.pipeline,
-        direct_callable_stack_size_from_traversal,
-        direct_callable_stack_size_from_state,
-        continuation_stack_size,
-        max_traversal_depth));
+    state.accel.build(state.optix_context.ctx());
 }
 
 void createTexture(PathTracerState &state)
@@ -675,7 +452,7 @@ void createSBT(PathTracerState &state)
     RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_raygen_record), raygen_record_size));
 
     RayGenRecord rg_sbt = {};
-    RENDERTOY3O_OPTIX_CHECK(optixSbtRecordPackHeader(state.raygen_prog_group, &rg_sbt));
+    RENDERTOY3O_OPTIX_CHECK(optixSbtRecordPackHeader(state.optix_context.raygen_prog_group(), &rg_sbt));
 
     RENDERTOY3O_CUDA_CHECK(cudaMemcpy(
         reinterpret_cast<void *>(d_raygen_record),
@@ -688,7 +465,7 @@ void createSBT(PathTracerState &state)
     RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_miss_records), miss_record_size * rendertoy3o::RAY_TYPE_COUNT));
 
     MissRecord ms_sbt[1];
-    RENDERTOY3O_OPTIX_CHECK(optixSbtRecordPackHeader(state.radiance_miss_group, &ms_sbt[0]));
+    RENDERTOY3O_OPTIX_CHECK(optixSbtRecordPackHeader(state.optix_context.radiance_miss_group(), &ms_sbt[0]));
     ms_sbt[0].data.bg_color = make_float4(0.0f);
 
     RENDERTOY3O_CUDA_CHECK(cudaMemcpy(
@@ -707,7 +484,7 @@ void createSBT(PathTracerState &state)
     for (size_t i = 0; i < g_meshes.size(); ++i)
     {
         HitGroupRecord record;
-        RENDERTOY3O_OPTIX_CHECK(optixSbtRecordPackHeader(state.radiance_hit_group, &record));
+        RENDERTOY3O_OPTIX_CHECK(optixSbtRecordPackHeader(state.optix_context.radiance_hit_group(), &record));
         // record.data.diffuse_color = {0.8f, 0.8f, 0.8f};
         if (g_meshes[i].material.m_diffuseTextureID != -1)
         {
@@ -720,10 +497,10 @@ void createSBT(PathTracerState &state)
             record.data.diffuse_color = g_meshes[i].material.m_diffuse;
         }
         record.data.emission_color = g_meshes[i].material.m_emissive;
-        record.data.vertices = reinterpret_cast<float3 *>(state.d_meshes[i]->vertex_buffer().buffer_ptr());
-        record.data.indices = reinterpret_cast<int3 *>(state.d_meshes[i]->index_buffer().buffer_ptr());
-        record.data.normals = reinterpret_cast<float3 *>(state.d_meshes[i]->normal_buffer().buffer_ptr());
-        record.data.texcoords = reinterpret_cast<float2 *>(state.d_meshes[i]->texcoord_buffer().buffer_ptr());
+        record.data.vertices = reinterpret_cast<float3 *>(state.d_meshes[i].vertex_buffer().buffer_ptr());
+        record.data.indices = reinterpret_cast<int3 *>(state.d_meshes[i].index_buffer().buffer_ptr());
+        record.data.normals = reinterpret_cast<float3 *>(state.d_meshes[i].normal_buffer().buffer_ptr());
+        record.data.texcoords = reinterpret_cast<float2 *>(state.d_meshes[i].texcoord_buffer().buffer_ptr());
         hitGroupRecords.push_back(record);
     }
 
@@ -742,7 +519,7 @@ void createSBT(PathTracerState &state)
     for (size_t i = 0; i < 1; ++i)
     {
         CallableRecord record;
-        RENDERTOY3O_OPTIX_CHECK(optixSbtRecordPackHeader(state.callable_test_group, &record));
+        RENDERTOY3O_OPTIX_CHECK(optixSbtRecordPackHeader(state.optix_context.callable_test_group(), &record));
         callableRecords.push_back(record);
     }
 
@@ -766,12 +543,8 @@ void createSBT(PathTracerState &state)
 
 void cleanupState(PathTracerState &state)
 {
-    RENDERTOY3O_OPTIX_CHECK(optixPipelineDestroy(state.pipeline));
-    RENDERTOY3O_OPTIX_CHECK(optixProgramGroupDestroy(state.raygen_prog_group));
-    RENDERTOY3O_OPTIX_CHECK(optixProgramGroupDestroy(state.radiance_miss_group));
-    RENDERTOY3O_OPTIX_CHECK(optixProgramGroupDestroy(state.radiance_hit_group));
-    RENDERTOY3O_OPTIX_CHECK(optixModuleDestroy(state.ptx_module));
-    RENDERTOY3O_OPTIX_CHECK(optixDeviceContextDestroy(state.context));
+
+    RENDERTOY3O_OPTIX_CHECK(optixDeviceContextDestroy(state.optix_context.ctx()));
 
     RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.sbt.raygenRecord)));
     RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.sbt.missRecordBase)));
@@ -849,17 +622,10 @@ int main(int argc, char *argv[])
     std::tie(g_meshes, g_textures) = rendertoy3o::loadOBJ({"/home/tianyu/mat_test.obj"});
     // std::tie(g_meshes, g_textures) = wavefront::loadOBJ({"/run/media/tianyu/hdd0-3d-wksp/testmodels/motion.obj"/*, "/run/media/tianyu/hdd0-3d-wksp/testmodels/motion0002.obj"*/});
 
-    // 创建CUDA和OptiX上下文
-    createContext(state);
     // 创建网格加速结构
     buildMeshAccel(state);
     // 创建层次化实例加速结构
     buildInstanceAccel(state);
-    // 创建模块
-    createModule(state);
-    // 创建程序组
-    createProgramGroups(state);
-    createPipeline(state);
     // 创建贴图
     createTexture(state);
     // 创建光源列表
@@ -869,8 +635,8 @@ int main(int argc, char *argv[])
 
     initLaunchParams(state);
 
-    if (outfile.empty())
-    {
+    // if (outfile.empty())
+    // {
         GLFWwindow *window = sutil::initUI("rendertoy3c", state.params.width, state.params.height);
         glfwSetMouseButtonCallback(window, mouseButtonCallback);
         glfwSetCursorPosCallback(window, cursorPosCallback);
@@ -925,41 +691,41 @@ int main(int argc, char *argv[])
         }
 
         sutil::cleanupUI(window);
-    }
-    else
-    {
-        if (output_buffer_type == sutil::CUDAOutputBufferType::GL_INTEROP)
-        {
-            sutil::initGLFW(); // For GL context
-            sutil::initGL();
-        }
+    // }
+    // else
+    // {
+    //     if (output_buffer_type == sutil::CUDAOutputBufferType::GL_INTEROP)
+    //     {
+    //         sutil::initGLFW(); // For GL context
+    //         sutil::initGL();
+    //     }
 
-        {
-            // this scope is for output_buffer, to ensure the destructor is called bfore glfwTerminate()
+    //     {
+    //         // this scope is for output_buffer, to ensure the destructor is called bfore glfwTerminate()
 
-            sutil::CUDAOutputBuffer<uchar4> output_buffer(
-                output_buffer_type,
-                state.params.width,
-                state.params.height);
+    //         sutil::CUDAOutputBuffer<uchar4> output_buffer(
+    //             output_buffer_type,
+    //             state.params.width,
+    //             state.params.height);
 
-            handleCameraUpdate(state.params);
-            handleResize(output_buffer, state.params);
-            launchSubframe(output_buffer, state);
+    //         handleCameraUpdate(state.params);
+    //         handleResize(output_buffer, state.params);
+    //         launchSubframe(output_buffer, state);
 
-            sutil::ImageBuffer buffer;
-            buffer.data = output_buffer.getHostPointer();
-            buffer.width = output_buffer.width();
-            buffer.height = output_buffer.height();
-            buffer.pixel_format = sutil::BufferImageFormat::UNSIGNED_BYTE4;
+    //         sutil::ImageBuffer buffer;
+    //         buffer.data = output_buffer.getHostPointer();
+    //         buffer.width = output_buffer.width();
+    //         buffer.height = output_buffer.height();
+    //         buffer.pixel_format = sutil::BufferImageFormat::UNSIGNED_BYTE4;
 
-            sutil::saveImage(outfile.c_str(), buffer, false);
-        }
+    //         sutil::saveImage(outfile.c_str(), buffer, false);
+    //     }
 
-        if (output_buffer_type == sutil::CUDAOutputBufferType::GL_INTEROP)
-        {
-            glfwTerminate();
-        }
-    }
+    //     if (output_buffer_type == sutil::CUDAOutputBufferType::GL_INTEROP)
+    //     {
+    //         glfwTerminate();
+    //     }
+    // }
 
     cleanupState(state);
     // }
