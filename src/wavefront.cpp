@@ -54,33 +54,12 @@ int32_t mouse_button = -1;
 
 int32_t samples_per_launch = 8;
 
-//------------------------------------------------------------------------------
-//
-// Local types
-// TODO: some of these should move to sutil or optix util header
-//
-//------------------------------------------------------------------------------
-
-template <typename T>
-struct Record
-{
-    __align__(OPTIX_SBT_RECORD_ALIGNMENT) char header[OPTIX_SBT_RECORD_HEADER_SIZE];
-    T data;
-};
-
-typedef Record<rendertoy3o::RayGenData> RayGenRecord;
-typedef Record<rendertoy3o::MissData> MissRecord;
-typedef Record<rendertoy3o::HitGroupData> HitGroupRecord;
-typedef Record<rendertoy3o::CallableData> CallableRecord;
-
 using namespace rendertoy3o;
 
 struct PathTracerState
 {
-    // std::vector<CUdeviceptr> motion_transform = {};
     CUstream stream = 0;
     rendertoy3o::Params params;
-    rendertoy3o::Params *d_params;
 };
 
 //------------------------------------------------------------------------------
@@ -181,17 +160,6 @@ static void scrollCallback(GLFWwindow *window, double xscroll, double yscroll)
 //
 //------------------------------------------------------------------------------
 
-void printUsageAndExit(const char *argv0)
-{
-    std::cerr << "Usage  : " << argv0 << " [options]\n";
-    std::cerr << "Options: --file | -f <filename>      File for image output\n";
-    std::cerr << "         --launch-samples | -s       Number of samples per pixel per launch (default 16)\n";
-    std::cerr << "         --no-gl-interop             Disable GL interop for display\n";
-    std::cerr << "         --dim=<width>x<height>      Set image dimensions; defaults to 768x768\n";
-    std::cerr << "         --help | -h                 Print this usage message\n";
-    exit(0);
-}
-
 void initLaunchParams(PathTracerState &state, const CUDAAccel &accel)
 {
     RENDERTOY3O_CUDA_CHECK(cudaMalloc(
@@ -204,7 +172,6 @@ void initLaunchParams(PathTracerState &state, const CUDAAccel &accel)
     state.params.handle = accel.ias_handle();
 
     RENDERTOY3O_CUDA_CHECK(cudaStreamCreate(&state.stream));
-    RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.d_params), sizeof(rendertoy3o::Params)));
 }
 
 void handleCameraUpdate(rendertoy3o::Params &params)
@@ -243,22 +210,19 @@ void updateState(sutil::CUDAOutputBuffer<uchar4> &output_buffer, rendertoy3o::Pa
     handleResize(output_buffer, params);
 }
 
-void launchSubframe(sutil::CUDAOutputBuffer<uchar4> &output_buffer, PathTracerState &state, const OptixContext &ctx, const OptixShaderBindingTable &sbt)
+void launchSubframe(sutil::CUDAOutputBuffer<uchar4> &output_buffer, PathTracerState &state, const OptixContext &ctx, const CUDAScene &scene)
 {
     // Launch
     uchar4 *result_buffer_data = output_buffer.map();
     state.params.frame_buffer = result_buffer_data;
-    RENDERTOY3O_CUDA_CHECK(cudaMemcpyAsync(
-        reinterpret_cast<void *>(state.d_params),
-        &state.params, sizeof(rendertoy3o::Params),
-        cudaMemcpyHostToDevice, state.stream));
+    scene.update_cuda_params_async(state.params, state.stream);
 
     RENDERTOY3O_OPTIX_CHECK(optixLaunch(
         ctx.pipeline(),
         state.stream,
-        reinterpret_cast<CUdeviceptr>(state.d_params),
+        scene.params(),
         sizeof(rendertoy3o::Params),
-        &sbt,
+        &scene.sbt(),
         state.params.width,  // launch width
         state.params.height, // launch height
         1                    // launch depth
@@ -281,11 +245,6 @@ void displaySubframe(sutil::CUDAOutputBuffer<uchar4> &output_buffer, rendertoy3o
         output_buffer.getPBO());
 }
 
-static void context_log_cb(unsigned int level, const char *tag, const char *message, void * /*cbdata */)
-{
-    std::cerr << "[" << std::setw(2) << level << "][" << std::setw(12) << tag << "]: " << message << "\n";
-}
-
 void initCameraState()
 {
     camera.setEye(make_float3(5.0f, 5.0f, 5.0f));
@@ -302,58 +261,6 @@ void initCameraState()
         make_float3(0.0f, 1.0f, 0.0f));
     trackball.setGimbalLock(true);
 }
-
-// /// @brief 创建网格加速结构
-// /// @param state 全程序状态配置
-// void buildMeshAccel(PathTracerState &state)
-// {
-//     // 多mesh的注意事项：
-//     // 需要使用多组 OptixBuildInput、多组 d_vertices 和多组 d_indices。
-//     // state.motion_transform.resize(g_meshes.size());
-
-//     for (size_t i = 0; i < g_meshes.size(); ++i)
-//     {
-//         const auto &mesh = g_meshes[i];
-//         state.d_meshes.push_back(CUDAMesh(state.optix_context.ctx(), mesh));
-
-//         // {
-//         //     const float motion_matrix_keys[2][12] =
-//         //         {
-//         //             {1.0f, 0.0f, 0.0f, 0.0f,
-//         //              0.0f, 1.0f, 0.0f, 0.0f,
-//         //              0.0f, 0.0f, 1.0f, 0.0f},
-//         //             {1.0f, 0.0f, 0.0f, 0.0f,
-//         //              0.0f, 1.0f, 0.0f, 0.5f,
-//         //              0.0f, 0.0f, 1.0f, 0.0f}};
-
-//         //     OptixMatrixMotionTransform motion_transform = {};
-//         //     motion_transform.child = state.gas_handle[i]; // 这里需要拿到 GAS 的handle。
-//         //     motion_transform.motionOptions.numKeys = 2;
-//         //     motion_transform.motionOptions.timeBegin = 0.0f;
-//         //     motion_transform.motionOptions.timeEnd = 1.0f;
-//         //     motion_transform.motionOptions.flags = OPTIX_MOTION_FLAG_NONE;
-//         //     memcpy(motion_transform.transform, motion_matrix_keys, 2 * 12 * sizeof(float));
-
-//         //     RENDERTOY3O_CUDA_CHECK(cudaMalloc(
-//         //         reinterpret_cast<void **>(&state.motion_transform[i]),
-//         //         sizeof(OptixMatrixMotionTransform)));
-
-//         //     RENDERTOY3O_CUDA_CHECK(cudaMemcpy(
-//         //         reinterpret_cast<void *>(state.motion_transform[i]),
-//         //         &motion_transform,
-//         //         sizeof(OptixMatrixMotionTransform),
-//         //         cudaMemcpyHostToDevice));
-
-//         //     RENDERTOY3O_OPTIX_CHECK(optixConvertPointerToTraversableHandle(
-//         //         state.optix_context.ctx(),
-//         //         state.motion_transform[i],
-//         //         OPTIX_TRAVERSABLE_TYPE_MATRIX_MOTION_TRANSFORM,
-//         //         &state.gas_motion_handle[i])); // 运动模糊：这说明了几何级别变形会生成一个独立于原有gas_handle的新motion_gas_handle。这个handle可以被插入全局handle，也可以被用于TLAS。
-
-//         //     // RENDERTOY3O_CUDA_CHECK(cudaFree((void *)state.motion_transform[i]));
-//         // }
-//     }
-// }
 
 /// @brief 创建光源采样表
 /// @param state
@@ -380,7 +287,6 @@ void buildLightSampler(PathTracerState &state)
 void cleanupState(PathTracerState &state)
 {
     RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.params.accum_buffer)));
-    RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.d_params)));
 }
 
 //------------------------------------------------------------------------------
@@ -447,7 +353,7 @@ int main(int argc, char *argv[])
             state_update_time += t1 - t0;
             t0 = t1;
 
-            launchSubframe(output_buffer, state, optix_context, cuda_scene.sbt());
+            launchSubframe(output_buffer, state, optix_context, cuda_scene);
             t1 = std::chrono::steady_clock::now();
             render_time += t1 - t0;
             t0 = t1;

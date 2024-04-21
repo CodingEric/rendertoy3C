@@ -51,7 +51,7 @@ namespace rendertoy3o
             std::cerr << "[" << std::setw(2) << level << "][" << std::setw(12) << tag << "]: " << message << "\n";
         }
 
-        void createModule()
+        void create_module()
         {
             OptixPayloadType payloadType = {};
             // radiance prd
@@ -123,7 +123,7 @@ namespace rendertoy3o
                 &_ptx_test));
         }
 
-        void createProgramGroups()
+        void create_program_groups()
         {
             OptixProgramGroupOptions program_group_options = {};
 
@@ -184,7 +184,7 @@ namespace rendertoy3o
             }
         }
 
-        void createPipeline()
+        void create_pipeline()
         {
             // Optix程序组
             OptixProgramGroup program_groups[] =
@@ -256,9 +256,9 @@ namespace rendertoy3o
 #endif
             RENDERTOY3O_OPTIX_CHECK(optixDeviceContextCreate(cu_ctx, &options, &_ctx));
 
-            createModule();
-            createProgramGroups();
-            createPipeline();
+            create_module();
+            create_program_groups();
+            create_pipeline();
         }
         OptixContext(const OptixContext &) = delete;
         OptixContext(const OptixContext &&) = delete;

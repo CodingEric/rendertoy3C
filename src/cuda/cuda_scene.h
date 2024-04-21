@@ -30,6 +30,8 @@ namespace rendertoy3o
         OptixShaderBindingTable _sbt = {};
         CUDAAccel _accel;
 
+        CUdeviceptr _cuda_params{0u};
+
     private:
         void create_sbt(OptixContext &optix_context, const std::vector<Mesh> &meshes)
         {
@@ -132,24 +134,26 @@ namespace rendertoy3o
         CUDAScene(CUDAScene &&) = delete;
         CUDAScene(OptixContext &optix_context, const std::vector<Mesh> &meshes, const std::vector<Texture> &textures)
         {
+            RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&_cuda_params), sizeof(rendertoy3o::Params)));
+
             for (const auto &mesh : meshes)
             {
                 _cuda_meshes.push_back(CUDAMesh(optix_context.ctx(), mesh));
             }
 
-            const std::vector<std::array<float, 12>> motion_matrix =
-                {{1.0f, 0.0f, 0.0f, 0.0f,
-                  0.0f, 1.0f, 0.0f, 0.0f,
-                  0.0f, 0.0f, 1.0f, 0.0f},
-                 {1.0f, 0.0f, 0.0f, 0.0f,
-                  0.0f, 1.0f, 0.0f, 0.5f,
-                  0.0f, 0.0f, 1.0f, 0.0f}};
+            // const std::vector<std::array<float, 12>> motion_matrix =
+            //     {{1.0f, 0.0f, 0.0f, 0.0f,
+            //       0.0f, 1.0f, 0.0f, 0.0f,
+            //       0.0f, 0.0f, 1.0f, 0.0f},
+            //      {1.0f, 0.0f, 0.0f, 0.0f,
+            //       0.0f, 1.0f, 0.0f, 0.5f,
+            //       0.0f, 0.0f, 1.0f, 0.0f}};
 
             float transformation[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
             for (const auto &mesh : _cuda_meshes)
             {
-                // _accel.append_instance(mesh, transformation);
-                _accel.append_animated_instance(optix_context.ctx(), mesh, motion_matrix, OptixMotionOptions {.flags = OPTIX_MOTION_FLAG_NONE, .numKeys = 2u, .timeBegin = 0.f, .timeEnd = 1.f}, transformation);
+                _accel.append_instance(mesh, transformation);
+                // _accel.append_animated_instance(optix_context.ctx(), mesh, motion_matrix, OptixMotionOptions {.flags = OPTIX_MOTION_FLAG_NONE, .numKeys = 2u, .timeBegin = 0.f, .timeEnd = 1.f}, transformation);
             }
             _accel.build(optix_context.ctx());
 
@@ -171,10 +175,22 @@ namespace rendertoy3o
             RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(_sbt.missRecordBase)));
             RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(_sbt.hitgroupRecordBase)));
             RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(_sbt.callablesRecordBase)));
+
+            RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(_cuda_params)));
+        }
+
+    public:
+        void update_cuda_params_async(const Params &params, const cudaStream_t stream) const
+        {
+            RENDERTOY3O_CUDA_CHECK(cudaMemcpyAsync(
+                reinterpret_cast<void *>(_cuda_params),
+                &params, sizeof(rendertoy3o::Params),
+                cudaMemcpyHostToDevice, stream));
         }
 
     public:
         [[nodiscard]] const auto &sbt() const { return _sbt; }
         [[nodiscard]] const auto &accel() const { return _accel; }
+        [[nodiscard]] const auto &params() const { return _cuda_params; }
     };
 }
