@@ -155,7 +155,10 @@ namespace rendertoy3o
         }
         ~CUDAMesh()
         {
-            if(_gas_output_buffer) { RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(_gas_output_buffer))); }
+            if (_gas_output_buffer)
+            {
+                RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(_gas_output_buffer)));
+            }
         }
 
     public:

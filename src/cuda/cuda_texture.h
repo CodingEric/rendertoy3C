@@ -28,12 +28,21 @@ namespace rendertoy3o
         };
 
     private:
-        cudaArray_t _texture_array{0};
-        cudaTextureObject_t _texture_object{0};
+        cudaArray_t _texture_array{0u};
+        cudaTextureObject_t _texture_object{0u};
 
         size_t _width, _height;
 
     public:
+        CUDATexture(const CUDATexture &) = delete;
+        CUDATexture(CUDATexture &&other) : _texture_array{other._texture_array},
+                                           _texture_object{other._texture_object},
+                                           _width{other._width},
+                                           _height{other._height}
+        {
+            other._texture_array = 0u;
+            other._texture_object = 0u;
+        }
         CUDATexture(size_t width,
                     size_t height,
                     const void *data,
@@ -67,12 +76,14 @@ namespace rendertoy3o
 
         ~CUDATexture()
         {
-            RENDERTOY3O_CUDA_CHECK(cudaDestroyTextureObject(_texture_object));
-            RENDERTOY3O_CUDA_CHECK(cudaFreeArray(_texture_array));
+            if (_texture_object)
+                RENDERTOY3O_CUDA_CHECK(cudaDestroyTextureObject(_texture_object));
+            if (_texture_array)
+                RENDERTOY3O_CUDA_CHECK(cudaFreeArray(_texture_array));
         }
 
     public:
-        const auto texture_object() const 
+        const auto texture_object() const
         {
             return _texture_object;
         }

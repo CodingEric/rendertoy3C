@@ -16,6 +16,7 @@ namespace rendertoy3o
 {
     class OptixContext
     {
+    private:
         template <typename T>
         struct Record
         {
@@ -268,6 +269,8 @@ namespace rendertoy3o
             RENDERTOY3O_OPTIX_CHECK(optixProgramGroupDestroy(_radiance_miss_group));
             RENDERTOY3O_OPTIX_CHECK(optixProgramGroupDestroy(_radiance_hit_group));
             RENDERTOY3O_OPTIX_CHECK(optixModuleDestroy(_ptx_module));
+
+            RENDERTOY3O_OPTIX_CHECK(optixDeviceContextDestroy(_ctx));
         }
 
     public:
