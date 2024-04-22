@@ -6,6 +6,7 @@
 #include <ranges>
 
 #include <support/tinyobj/tiny_obj_loader.h>
+#define STB_IMAGE_IMPLEMENTATION
 #include <support/stb/stb_image.h>
 #include "mesh.h"
 

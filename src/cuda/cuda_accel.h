@@ -7,6 +7,7 @@
 #include <cstring>
 
 #include <src/util/exception.h>
+#include <src/util/type.h>
 #include "cuda_mesh.h"
 
 namespace rendertoy3o

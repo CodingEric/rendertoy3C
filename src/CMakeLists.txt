@@ -26,6 +26,7 @@ OPTIX_add_sample_executable( optixPathTracer target_name
   util/sampling.h
   util/math.h
   util/exception.h
+  util/type.h
 
   gui/display.h
   gui/display.cpp
