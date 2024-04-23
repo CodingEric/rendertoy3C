@@ -12,17 +12,6 @@ namespace rendertoy3o
     class CUDAScene
     {
     private:
-        template <typename T>
-        struct Record
-        {
-            __align__(OPTIX_SBT_RECORD_ALIGNMENT) char header[OPTIX_SBT_RECORD_HEADER_SIZE];
-            T data;
-        };
-
-        typedef Record<rendertoy3o::RayGenData> RayGenRecord;
-        typedef Record<rendertoy3o::MissData> MissRecord;
-        typedef Record<rendertoy3o::HitGroupData> HitGroupRecord;
-        typedef Record<rendertoy3o::CallableData> CallableRecord;
 
     private:
         std::vector<CUDAMesh> _cuda_meshes = {};

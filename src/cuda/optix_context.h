@@ -9,26 +9,12 @@
 #include <iomanip>
 
 #include <src/util/exception.h>
-
 #include <src/shader/shader_data.h> // Is it good?
 
 namespace rendertoy3o
 {
     class OptixContext
     {
-    private:
-        template <typename T>
-        struct Record
-        {
-            __align__(OPTIX_SBT_RECORD_ALIGNMENT) char header[OPTIX_SBT_RECORD_HEADER_SIZE];
-            T data;
-        };
-
-        typedef Record<rendertoy3o::RayGenData> RayGenRecord;
-        typedef Record<rendertoy3o::MissData> MissRecord;
-        typedef Record<rendertoy3o::HitGroupData> HitGroupRecord;
-        typedef Record<rendertoy3o::CallableData> CallableRecord;
-
     private:
         OptixDeviceContext _ctx;
         OptixPipelineCompileOptions _pipeline_compile_options = {};

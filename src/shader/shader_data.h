@@ -139,4 +139,15 @@ namespace rendertoy3o
     {
     };
 
+    template <typename T>
+    struct Record
+    {
+        __align__(OPTIX_SBT_RECORD_ALIGNMENT) char header[OPTIX_SBT_RECORD_HEADER_SIZE];
+        T data;
+    };
+    using RayGenRecord = Record<rendertoy3o::RayGenData>;
+    using MissRecord = Record<rendertoy3o::MissData>;
+    using HitGroupRecord = Record<rendertoy3o::HitGroupData>;
+    using CallableRecord = Record<rendertoy3o::CallableData>;
+
 } // namespace wavefront

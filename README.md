@@ -12,9 +12,9 @@ Wavefront path tracing playground with cuda/optix backend.
 - [x] Uniform light sampler.
 - [x] Wavefront .obj file support.
 - [x] Texturing.
-- [ ] Organized two level AS.
-- [ ] Organized motion blur.
+- [x] Organized two level AS.
+- [x] Organized motion blur.
 - [ ] Principled BSDF.
-- [ ] RAII-style optix device.
+- [x] RAII-style optix device.
 - [ ] Power light sampler.
 - [ ] Realtime denoiser.
