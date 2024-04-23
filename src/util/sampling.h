@@ -5,7 +5,7 @@
 
 namespace rendertoy3o {
 
-WAVEFRONT_CPU_GPU_INLINE
+RENDERTOY_CPU_GPU_INLINE
 float2 SampleUniformDiskConcentric(float2 u) {
     // Map _u_ to $[-1,1]^2$ and handle degeneracy at the origin
     float2 uOffset = 2 * u - make_float2(1, 1);
@@ -24,7 +24,7 @@ float2 SampleUniformDiskConcentric(float2 u) {
     return r * make_float2(std::cos(theta), std::sin(theta));
 }
 
-WAVEFRONT_CPU_GPU_INLINE
+RENDERTOY_CPU_GPU_INLINE
 float3 SampleCosineHemisphere(float2 u) {
     // Uniformly sample disk.
     const float r = sqrtf(u.x);
@@ -36,7 +36,7 @@ float3 SampleCosineHemisphere(float2 u) {
     return p;
 }
 
-WAVEFRONT_CPU_GPU_INLINE
+RENDERTOY_CPU_GPU_INLINE
 float SampleCosineHemispherePDF(float cosTheta) {
     return cosTheta * M_1_PIf;
 }

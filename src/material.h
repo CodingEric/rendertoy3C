@@ -31,7 +31,7 @@ struct Material
 
     int m_normalTextureID{-1};
 
-    // WAVEFRONT_GPU BSDF GetBSDF()
+    // RENDERTOY_GPU BSDF GetBSDF()
     // {
 
     // }

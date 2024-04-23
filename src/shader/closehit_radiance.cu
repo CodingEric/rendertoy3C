@@ -4,14 +4,14 @@
 
 extern "C"
 {
-    __constant__ rendertoy3o::Params params;
+    __constant__ rendertoy3o::RenderSettings params;
 }
 
 static __forceinline__ __device__ void SampleLights(const float3 &P, unsigned int &seed, float3 &light_pos, float3 &emission, float &pdf)
 {
-    rendertoy3o::Light light = params.lights[int(rnd(seed) * params.light_count)];
+    rendertoy3o::Light light = params.light_settings.lights[int(rnd(seed) * params.light_settings.light_count)];
     light.Sample(P, seed, light_pos, emission, pdf);
-    pdf /= params.light_count;
+    pdf /= params.light_settings.light_count;
 }
 
 static __forceinline__ __device__ rendertoy3o::RadiancePRD loadClosesthitRadiancePRD()

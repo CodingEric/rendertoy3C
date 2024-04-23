@@ -20,7 +20,7 @@ struct Light
     float3 m_normal;
     float m_area;
 
-    WAVEFRONT_CPU_GPU
+    RENDERTOY_CPU_GPU
     Light(float3 emission, float3 v0, float3 v1, float3 v2, LightType lightType = LightType::SurfaceLight)
         : m_lightType(lightType), m_emission(emission), m_v0(v0), m_v1(v1), m_v2(v2)
     {
@@ -29,7 +29,7 @@ struct Light
         m_normal = normalize(m_normal);
     }
 
-    WAVEFRONT_GPU
+    RENDERTOY_GPU
     void Sample(const float3 &P, unsigned int &seed, float3 &light_pos, float3 &emission, float &pdf)
     {
         const float u = rnd(seed);

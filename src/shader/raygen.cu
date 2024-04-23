@@ -2,7 +2,7 @@
 
 extern "C"
 {
-    __constant__ rendertoy3o::Params params;
+    __constant__ rendertoy3o::RenderSettings params;
 }
 
 //------------------------------------------------------------------------------
@@ -13,19 +13,19 @@ extern "C"
 
 extern "C" __global__ void __raygen__rg()
 {
-    const int w = params.width;
-    const int h = params.height;
-    const float3 eye = params.eye;
-    const float3 U = params.U;
-    const float3 V = params.V;
-    const float3 W = params.W;
+    const int w = params.film_settings.width;
+    const int h = params.film_settings.height;
+    const float3 eye = params.camera_settings.eye;
+    const float3 U = params.camera_settings.U;
+    const float3 V = params.camera_settings.V;
+    const float3 W = params.camera_settings.W;
     const uint3 idx = optixGetLaunchIndex();
-    const int subframe_index = params.subframe_index;
+    const int subframe_index = params.film_settings.subframe_index;
 
     unsigned int seed = tea<4>(idx.y * w + idx.x, subframe_index);
 
     float3 result = make_float3(0.0f);
-    int i = params.samples_per_launch;
+    int i = params.film_settings.samples_per_launch;
     do
     {
         // The center of each pixel is at fraction (0.5,0.5)
@@ -73,15 +73,15 @@ extern "C" __global__ void __raygen__rg()
     } while (--i);
 
     const uint3 launch_index = optixGetLaunchIndex();
-    const unsigned int image_index = launch_index.y * params.width + launch_index.x;
-    float3 accum_color = result / static_cast<float>(params.samples_per_launch);
+    const unsigned int image_index = launch_index.y * params.film_settings.width + launch_index.x;
+    float3 accum_color = result / static_cast<float>(params.film_settings.samples_per_launch);
 
     if (subframe_index > 0)
     {
         const float a = 1.0f / static_cast<float>(subframe_index + 1);
-        const float3 accum_color_prev = make_float3(params.accum_buffer[image_index]);
+        const float3 accum_color_prev = make_float3(params.film_settings.accum_buffer[image_index]);
         accum_color = lerp(accum_color_prev, accum_color, a);
     }
-    params.accum_buffer[image_index] = make_float4(accum_color, 1.0f);
-    params.frame_buffer[image_index] = make_color(accum_color);
+    params.film_settings.accum_buffer[image_index] = make_float4(accum_color, 1.0f);
+    params.film_settings.frame_buffer[image_index] = make_color(accum_color);
 }

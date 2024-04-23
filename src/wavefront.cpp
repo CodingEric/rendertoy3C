@@ -59,7 +59,7 @@ using namespace rendertoy3o;
 struct PathTracerState
 {
     CUstream stream = 0;
-    rendertoy3o::Params params;
+    rendertoy3o::RenderSettings params;
 };
 
 //------------------------------------------------------------------------------
@@ -81,7 +81,6 @@ static void mouseButtonCallback(GLFWwindow *window, int button, int action, int 
 {
     double xpos, ypos;
     glfwGetCursorPos(window, &xpos, &ypos);
-
     if (action == GLFW_PRESS)
     {
         mouse_button = button;
@@ -95,34 +94,29 @@ static void mouseButtonCallback(GLFWwindow *window, int button, int action, int 
 
 static void cursorPosCallback(GLFWwindow *window, double xpos, double ypos)
 {
-    rendertoy3o::Params *params = static_cast<rendertoy3o::Params *>(glfwGetWindowUserPointer(window));
-
+    rendertoy3o::RenderSettings *params = static_cast<rendertoy3o::RenderSettings *>(glfwGetWindowUserPointer(window));
     if (mouse_button == GLFW_MOUSE_BUTTON_LEFT)
     {
         trackball.setViewMode(sutil::Trackball::LookAtFixed);
-        trackball.updateTracking(static_cast<int>(xpos), static_cast<int>(ypos), params->width, params->height);
+        trackball.updateTracking(static_cast<int>(xpos), static_cast<int>(ypos), params->film_settings.width, params->film_settings.height);
         camera_changed = true;
     }
     else if (mouse_button == GLFW_MOUSE_BUTTON_RIGHT)
     {
         trackball.setViewMode(sutil::Trackball::EyeFixed);
-        trackball.updateTracking(static_cast<int>(xpos), static_cast<int>(ypos), params->width, params->height);
+        trackball.updateTracking(static_cast<int>(xpos), static_cast<int>(ypos), params->film_settings.width, params->film_settings.height);
         camera_changed = true;
     }
 }
 
 static void windowSizeCallback(GLFWwindow *window, int32_t res_x, int32_t res_y)
 {
-    // Keep rendering at the current resolution when the window is minimized.
     if (minimized)
         return;
-
-    // Output dimensions must be at least 1 in both x and y.
     sutil::ensureMinimumSize(res_x, res_y);
-
-    rendertoy3o::Params *params = static_cast<rendertoy3o::Params *>(glfwGetWindowUserPointer(window));
-    params->width = res_x;
-    params->height = res_y;
+    rendertoy3o::RenderSettings *params = static_cast<rendertoy3o::RenderSettings *>(glfwGetWindowUserPointer(window));
+    params->film_settings.width = res_x;
+    params->film_settings.height = res_y;
     camera_changed = true;
     resize_dirty = true;
 }
@@ -140,10 +134,6 @@ static void keyCallback(GLFWwindow *window, int32_t key, int32_t /*scancode*/, i
         {
             glfwSetWindowShouldClose(window, true);
         }
-    }
-    else if (key == GLFW_KEY_G)
-    {
-        // toggle UI draw
     }
 }
 
@@ -163,48 +153,48 @@ static void scrollCallback(GLFWwindow *window, double xscroll, double yscroll)
 void initLaunchParams(PathTracerState &state, const CUDAAccel &accel)
 {
     RENDERTOY3O_CUDA_CHECK(cudaMalloc(
-        reinterpret_cast<void **>(&state.params.accum_buffer),
-        state.params.width * state.params.height * sizeof(float4)));
-    state.params.frame_buffer = nullptr; // Will be set when output buffer is mapped
+        reinterpret_cast<void **>(&state.params.film_settings.accum_buffer),
+        state.params.film_settings.width * state.params.film_settings.height * sizeof(float4)));
+    state.params.film_settings.frame_buffer = nullptr; // Will be set when output buffer is mapped
 
-    state.params.samples_per_launch = samples_per_launch;
-    state.params.subframe_index = 0u;
+    state.params.film_settings.samples_per_launch = samples_per_launch;
+    state.params.film_settings.subframe_index = 0u;
     state.params.handle = accel.ias_handle();
 
-    RENDERTOY3O_CUDA_CHECK(cudaStreamCreate(&state.stream));
+    
 }
 
-void handleCameraUpdate(rendertoy3o::Params &params)
+void handleCameraUpdate(rendertoy3o::RenderSettings &params)
 {
     if (!camera_changed)
         return;
     camera_changed = false;
 
-    camera.setAspectRatio(static_cast<float>(params.width) / static_cast<float>(params.height));
-    params.eye = camera.eye();
-    camera.UVWFrame(params.U, params.V, params.W);
+    camera.setAspectRatio(static_cast<float>(params.film_settings.width) / static_cast<float>(params.film_settings.height));
+    params.camera_settings.eye = camera.eye();
+    camera.UVWFrame(params.camera_settings.U, params.camera_settings.V, params.camera_settings.W);
 }
 
-void handleResize(sutil::CUDAOutputBuffer<uchar4> &output_buffer, rendertoy3o::Params &params)
+void handleResize(sutil::CUDAOutputBuffer<uchar4> &output_buffer, rendertoy3o::RenderSettings &params)
 {
     if (!resize_dirty)
         return;
     resize_dirty = false;
 
-    output_buffer.resize(params.width, params.height);
+    output_buffer.resize(params.film_settings.width, params.film_settings.height);
 
     // Realloc accumulation buffer
-    RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(params.accum_buffer)));
+    RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(params.film_settings.accum_buffer)));
     RENDERTOY3O_CUDA_CHECK(cudaMalloc(
-        reinterpret_cast<void **>(&params.accum_buffer),
-        params.width * params.height * sizeof(float4)));
+        reinterpret_cast<void **>(&params.film_settings.accum_buffer),
+        params.film_settings.width * params.film_settings.height * sizeof(float4)));
 }
 
-void updateState(sutil::CUDAOutputBuffer<uchar4> &output_buffer, rendertoy3o::Params &params)
+void updateState(sutil::CUDAOutputBuffer<uchar4> &output_buffer, rendertoy3o::RenderSettings &params)
 {
     // Update params on device
     if (camera_changed || resize_dirty)
-        params.subframe_index = 0;
+        params.film_settings.subframe_index = 0;
 
     handleCameraUpdate(params);
     handleResize(output_buffer, params);
@@ -214,17 +204,17 @@ void launchSubframe(sutil::CUDAOutputBuffer<uchar4> &output_buffer, PathTracerSt
 {
     // Launch
     uchar4 *result_buffer_data = output_buffer.map();
-    state.params.frame_buffer = result_buffer_data;
+    state.params.film_settings.frame_buffer = result_buffer_data;
     scene.update_cuda_params_async(state.params, state.stream);
 
     RENDERTOY3O_OPTIX_CHECK(optixLaunch(
         ctx.pipeline(),
         state.stream,
         scene.params(),
-        sizeof(rendertoy3o::Params),
+        sizeof(rendertoy3o::RenderSettings),
         &scene.sbt(),
-        state.params.width,  // launch width
-        state.params.height, // launch height
+        state.params.film_settings.width,  // launch width
+        state.params.film_settings.height, // launch height
         1                    // launch depth
         ));
     output_buffer.unmap();
@@ -279,14 +269,14 @@ void buildLightSampler(PathTracerState &state)
             lights.push_back(light);
         }
     }
-    state.params.light_count = lights.size();
-    RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.params.lights), lights.size() * sizeof(rendertoy3o::Light)));
-    RENDERTOY3O_CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.params.lights), lights.data(), lights.size() * sizeof(rendertoy3o::Light), cudaMemcpyHostToDevice));
+    state.params.light_settings.light_count = lights.size();
+    RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.params.light_settings.lights), lights.size() * sizeof(rendertoy3o::Light)));
+    RENDERTOY3O_CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.params.light_settings.lights), lights.data(), lights.size() * sizeof(rendertoy3o::Light), cudaMemcpyHostToDevice));
 }
 
 void cleanupState(PathTracerState &state)
 {
-    RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.params.accum_buffer)));
+    RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.params.film_settings.accum_buffer)));
 }
 
 //------------------------------------------------------------------------------
@@ -297,28 +287,30 @@ void cleanupState(PathTracerState &state)
 
 int main(int argc, char *argv[])
 {
+    // std::tie(g_meshes, g_textures) = wavefront::loadOBJ({"/home/tianyu/1.obj", "/home/tianyu/2.obj"});
+    // std::tie(g_meshes, g_textures) = rendertoy3o::loadOBJ({"/home/tianyu/mat_test.obj"});
+    std::tie(g_meshes, g_textures) = rendertoy3o::loadOBJ({"E:\\test.obj"});
+    // std::tie(g_meshes, g_textures) = wavefront::loadOBJ({"/run/media/tianyu/hdd0-3d-wksp/testmodels/motion.obj"/*, "/run/media/tianyu/hdd0-3d-wksp/testmodels/motion0002.obj"*/});
+
+    OptixContext optix_context;
+    CUDAScene cuda_scene(optix_context, g_meshes, g_textures);
     // 总体状态机
-    PathTracerState state;
-    state.params.width = 768;
-    state.params.height = 768;
+    PathTracerState state{
+        .stream = 0u,
+        .params = RenderSettings(768, 768, samples_per_launch, cuda_scene.accel().ias_handle())
+    };
+    RENDERTOY3O_CUDA_CHECK(cudaStreamCreate(&state.stream));
     sutil::CUDAOutputBufferType output_buffer_type = sutil::CUDAOutputBufferType::GL_INTEROP;
 
     // 初始化摄像机参数，包括互动场景摄像机
     initCameraState();
 
-    // std::tie(g_meshes, g_textures) = wavefront::loadOBJ({"/home/tianyu/1.obj", "/home/tianyu/2.obj"});
-    std::tie(g_meshes, g_textures) = rendertoy3o::loadOBJ({"/home/tianyu/mat_test.obj"});
-    // std::tie(g_meshes, g_textures) = wavefront::loadOBJ({"/run/media/tianyu/hdd0-3d-wksp/testmodels/motion.obj"/*, "/run/media/tianyu/hdd0-3d-wksp/testmodels/motion0002.obj"*/});
-
-    OptixContext optix_context;
-    CUDAScene cuda_scene(optix_context, g_meshes, g_textures);
-
     // 创建光源列表
     buildLightSampler(state);
 
-    initLaunchParams(state, cuda_scene.accel());
+    // initLaunchParams(state, cuda_scene.accel());
 
-    GLFWwindow *window = sutil::initUI("rendertoy3c", state.params.width, state.params.height);
+    GLFWwindow *window = sutil::initUI("rendertoy3c", state.params.film_settings.width, state.params.film_settings.height);
     glfwSetMouseButtonCallback(window, mouseButtonCallback);
     glfwSetCursorPosCallback(window, cursorPosCallback);
     glfwSetWindowSizeCallback(window, windowSizeCallback);
@@ -333,8 +325,8 @@ int main(int argc, char *argv[])
     {
         sutil::CUDAOutputBuffer<uchar4> output_buffer(
             output_buffer_type,
-            state.params.width,
-            state.params.height);
+            state.params.film_settings.width,
+            state.params.film_settings.height);
 
         output_buffer.setStream(state.stream);
         rendertoy3o::GLDisplay gl_display;
@@ -366,7 +358,7 @@ int main(int argc, char *argv[])
 
             glfwSwapBuffers(window);
 
-            ++state.params.subframe_index;
+            ++state.params.film_settings.subframe_index;
         } while (!glfwWindowShouldClose(window));
         CUDA_SYNC_CHECK();
     }

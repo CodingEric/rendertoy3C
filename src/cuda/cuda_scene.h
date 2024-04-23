@@ -134,7 +134,7 @@ namespace rendertoy3o
         CUDAScene(CUDAScene &&) = delete;
         CUDAScene(OptixContext &optix_context, const std::vector<Mesh> &meshes, const std::vector<Texture> &textures)
         {
-            RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&_cuda_params), sizeof(rendertoy3o::Params)));
+            RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&_cuda_params), sizeof(rendertoy3o::RenderSettings)));
 
             for (const auto &mesh : meshes)
             {
@@ -180,11 +180,11 @@ namespace rendertoy3o
         }
 
     public:
-        void update_cuda_params_async(const Params &params, const cudaStream_t stream) const
+        void update_cuda_params_async(const RenderSettings &params, const cudaStream_t stream) const
         {
             RENDERTOY3O_CUDA_CHECK(cudaMemcpyAsync(
                 reinterpret_cast<void *>(_cuda_params),
-                &params, sizeof(rendertoy3o::Params),
+                &params, sizeof(rendertoy3o::RenderSettings),
                 cudaMemcpyHostToDevice, stream));
         }
 

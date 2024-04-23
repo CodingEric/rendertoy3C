@@ -14,7 +14,7 @@ namespace rendertoy3o {
 
 struct Onb
 {
-    WAVEFRONT_CPU_GPU
+    RENDERTOY_CPU_GPU
     Onb(const float3 &normal)
     {
         m_normal = normal;
@@ -36,7 +36,7 @@ struct Onb
         m_tangent = cross(m_binormal, m_normal);
     }
 
-    WAVEFRONT_CPU_GPU
+    RENDERTOY_CPU_GPU
     void inverse_transform(float3 &p) const
     {
         p = p.x * m_tangent + p.y * m_binormal + p.z * m_normal;
@@ -47,7 +47,7 @@ struct Onb
     float3 m_normal;
 };
 
-WAVEFRONT_GPU_INLINE
+RENDERTOY_GPU_INLINE
 static void traceRadiance(
     OptixTraversableHandle handle,
     float3 ray_origin,
@@ -106,7 +106,7 @@ static void traceRadiance(
 }
 
 // Returns true if ray is occluded, else false
-WAVEFRONT_GPU_INLINE
+RENDERTOY_GPU_INLINE
 static bool traceOcclusion(
     OptixTraversableHandle handle,
     float3 ray_origin,
@@ -133,7 +133,7 @@ static bool traceOcclusion(
     return optixHitObjectIsHit();
 }
 
-WAVEFRONT_CPU_GPU
+RENDERTOY_CPU_GPU
 static float powerHeuristic(
     const float &p1,
     const float &p2

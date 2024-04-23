@@ -8,16 +8,18 @@
 
 #include <sutil/vec_math.h>
 
-// 这两个宏不应该被编译到 CPU 上
-#define WAVEFRONT_GPU __device__
-#define WAVEFRONT_GPU_INLINE __device__ __forceinline__
+// 这两个宏不应该被编译到 CPU 上，不在 __NVCC__ 下启用的目的是让编译器报错。
+#define RENDERTOY_GPU __device__
+#define RENDERTOY_GPU_INLINE __device__ __forceinline__
+
+#define RENDERTOY_CPU __host__
 
 #ifdef __NVCC__
-#define WAVEFRONT_CPU_GPU __host__ __device__
-#define WAVEFRONT_CPU_GPU_INLINE __host__ __device__ __forceinline__
+#define RENDERTOY_CPU_GPU __host__ __device__
+#define RENDERTOY_CPU_GPU_INLINE __host__ __device__ __forceinline__
 #else
-#define WAVEFRONT_CPU_GPU
-#define WAVEFRONT_CPU_GPU_INLINE inline
+#define RENDERTOY_CPU_GPU
+#define RENDERTOY_CPU_GPU_INLINE inline
 #endif // __NVCC__
 
 using Spectrum = float3;

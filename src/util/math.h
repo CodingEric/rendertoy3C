@@ -17,7 +17,7 @@
 
 namespace rendertoy3o {
 
-WAVEFRONT_CPU_GPU_INLINE
+RENDERTOY_CPU_GPU_INLINE
 float safeSqrt(float x) {
     return sqrtf(fmaxf(0.0f, x));
 }

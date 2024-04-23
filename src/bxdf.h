@@ -13,7 +13,7 @@ struct SampledBxDF
     float3 m_wi;
     float m_p;
 
-    WAVEFRONT_GPU
+    RENDERTOY_GPU
     SampledBxDF(Spectrum bsdf, float3 wi, float p) : m_bsdf(bsdf), m_wi(wi), m_p(p) {}
 };
 
@@ -21,16 +21,16 @@ struct DiffuseBSDF
 {
     float3 m_R;
 
-    WAVEFRONT_CPU_GPU
+    RENDERTOY_CPU_GPU
     DiffuseBSDF(const float3 &R, const float3 &T) : m_R(R) {}
 
-    WAVEFRONT_GPU
+    RENDERTOY_GPU
     Spectrum f(const float3 &wo, const float3 &wi) const
     {
         return m_R * M_1_PIf;
     }
 
-    WAVEFRONT_GPU
+    RENDERTOY_GPU
     SampledBxDF Sample_f(const float3 &wo, unsigned int &seed) const
     {
         float3 wi = SampleCosineHemisphere(rnd2(seed));
@@ -40,7 +40,7 @@ struct DiffuseBSDF
         return SampledBxDF(m_R * M_1_PIf, wi, pdf);
     }
 
-    WAVEFRONT_GPU
+    RENDERTOY_GPU
     float PDF(const float3 &wo, const float3 &wi) const
     {
         return SampleCosineHemispherePDF(fabsf(wi.z));
