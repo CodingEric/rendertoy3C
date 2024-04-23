@@ -12,8 +12,8 @@ namespace rendertoy3o
     class CUDAScene
     {
     private:
+        const OptixContext &_optix_context;
 
-    private:
         std::vector<CUDAMesh> _cuda_meshes = {};
         std::vector<CUDATexture<uchar4>> _cuda_textures = {};
         OptixShaderBindingTable _sbt = {};
@@ -22,14 +22,14 @@ namespace rendertoy3o
         CUdeviceptr _cuda_params{0u};
 
     private:
-        void create_sbt(OptixContext &optix_context, const std::vector<Mesh> &meshes)
+        void create_sbt(const std::vector<Mesh> &meshes)
         {
             CUdeviceptr d_raygen_record;
             const size_t raygen_record_size = sizeof(RayGenRecord);
             RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_raygen_record), raygen_record_size));
 
             RayGenRecord rg_sbt = {};
-            RENDERTOY3O_OPTIX_CHECK(optixSbtRecordPackHeader(optix_context.raygen_prog_group(), &rg_sbt));
+            RENDERTOY3O_OPTIX_CHECK(optixSbtRecordPackHeader(_optix_context.raygen_prog_group(), &rg_sbt));
 
             RENDERTOY3O_CUDA_CHECK(cudaMemcpy(
                 reinterpret_cast<void *>(d_raygen_record),
@@ -42,7 +42,7 @@ namespace rendertoy3o
             RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_miss_records), miss_record_size * rendertoy3o::RAY_TYPE_COUNT));
 
             MissRecord ms_sbt[1];
-            RENDERTOY3O_OPTIX_CHECK(optixSbtRecordPackHeader(optix_context.radiance_miss_group(), &ms_sbt[0]));
+            RENDERTOY3O_OPTIX_CHECK(optixSbtRecordPackHeader(_optix_context.radiance_miss_group(), &ms_sbt[0]));
             ms_sbt[0].data.bg_color = make_float4(0.0f);
 
             RENDERTOY3O_CUDA_CHECK(cudaMemcpy(
@@ -61,7 +61,7 @@ namespace rendertoy3o
             for (size_t i = 0; i < meshes.size(); ++i)
             {
                 HitGroupRecord record;
-                RENDERTOY3O_OPTIX_CHECK(optixSbtRecordPackHeader(optix_context.radiance_hit_group(), &record));
+                RENDERTOY3O_OPTIX_CHECK(optixSbtRecordPackHeader(_optix_context.radiance_hit_group(), &record));
                 // record.data.diffuse_color = {0.8f, 0.8f, 0.8f};
                 if (meshes[i].material.m_diffuseTextureID != -1)
                 {
@@ -96,7 +96,7 @@ namespace rendertoy3o
             for (size_t i = 0; i < 1; ++i)
             {
                 CallableRecord record;
-                RENDERTOY3O_OPTIX_CHECK(optixSbtRecordPackHeader(optix_context.callable_test_group(), &record));
+                RENDERTOY3O_OPTIX_CHECK(optixSbtRecordPackHeader(_optix_context.callable_test_group(), &record));
                 callableRecords.push_back(record);
             }
 
@@ -121,7 +121,8 @@ namespace rendertoy3o
     public:
         CUDAScene(const CUDAScene &) = delete;
         CUDAScene(CUDAScene &&) = delete;
-        CUDAScene(OptixContext &optix_context, const std::vector<Mesh> &meshes, const std::vector<Texture> &textures)
+        CUDAScene(const OptixContext &optix_context, const std::vector<Mesh> &meshes, const std::vector<Texture> &textures)
+        : _optix_context(optix_context)
         {
             RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&_cuda_params), sizeof(rendertoy3o::RenderSettings)));
 
@@ -155,7 +156,7 @@ namespace rendertoy3o
                                                              CUDATexture<uchar4>::FilterMode::Linear));
             }
 
-            create_sbt(optix_context, meshes);
+            create_sbt(meshes);
         }
 
         ~CUDAScene()

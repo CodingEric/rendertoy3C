@@ -7,6 +7,7 @@
 
 #include <iostream>
 #include <iomanip>
+#include <utility>
 
 #include <src/util/exception.h>
 #include <src/shader/shader_data.h> // Is it good?
@@ -269,5 +270,10 @@ namespace rendertoy3o
         [[nodiscard]] const auto &radiance_hit_group() const { return _radiance_hit_group; }
         [[nodiscard]] const auto &callable_test_group() const { return _callable_test_group; }
         [[nodiscard]] const auto &pipeline() const { return _pipeline; }
+
+    public:
+        [[nodiscard]] const auto create_scene(const std::vector<Mesh> &meshes, const std::vector<Texture> &textures) const {
+            return CUDAScene(*this, std::forward<const std::vector<Mesh> &>(meshes), std::forward<const std::vector<Texture> &>(textures));
+        }
     };
 }
