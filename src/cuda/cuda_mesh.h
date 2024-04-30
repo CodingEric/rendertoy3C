@@ -1,6 +1,7 @@
 #pragma once
 
 #include "cuda_buffer.h"
+#include "cuda_stream.h"
 #include <src/mesh.h>
 
 namespace rendertoy3o
@@ -30,15 +31,15 @@ namespace rendertoy3o
             other._gas_handle = 0u;
             other._gas_output_buffer = 0u;
         }
-        CUDAMesh(OptixDeviceContext ctx, const Mesh &mesh) : _vertex_buffer{CUDABuffer<float3>(mesh.vertices[0].size())}, // TODO: more explicit representation
-                                                             _index_buffer{CUDABuffer<int3>(mesh.indices.size())},
-                                                             _normal_buffer{CUDABuffer<float3>(mesh.normals[0].size())},
-                                                             _texcoord_buffer{CUDABuffer<float2>(mesh.texcoords[0].size())},
-                                                             _vertices_per_key{mesh.num_keys}
+        CUDAMesh(const CUDAStream &stream, OptixDeviceContext ctx, const Mesh &mesh) : _vertex_buffer{CUDABuffer<float3>(stream, mesh.vertices[0].size())}, // TODO: more explicit representation
+                                                                                       _index_buffer{CUDABuffer<int3>(stream, mesh.indices.size())},
+                                                                                       _normal_buffer{CUDABuffer<float3>(stream, mesh.normals[0].size())},
+                                                                                       _texcoord_buffer{CUDABuffer<float2>(stream, mesh.texcoords[0].size())},
+                                                                                       _vertices_per_key{mesh.num_keys}
         {
             for (unsigned int j = 0; j < mesh.num_keys; ++j)
             {
-                _vertex_buffer.copy_from(&mesh.vertices[j][0], j * mesh.vertices[0].size(), mesh.vertices[0].size());
+                _vertex_buffer.copy_from(stream, &mesh.vertices[j][0], j * mesh.vertices[0].size(), mesh.vertices[0].size());
                 const size_t per_keyframe_vertices_size_in_bytes = mesh.vertices[0].size() * sizeof(float3);
 
                 for (unsigned int j = 0; j < mesh.num_keys; ++j)
@@ -46,14 +47,14 @@ namespace rendertoy3o
                     _vertices_per_key[j] = _vertex_buffer.buffer_ptr() + j * per_keyframe_vertices_size_in_bytes;
                 }
 
-                _index_buffer.copy_from(mesh.indices.data(), 0u, mesh.indices.size());
+                _index_buffer.copy_from(stream, mesh.indices.data(), 0u, mesh.indices.size());
                 for (unsigned int j = 0; j < mesh.num_keys; ++j)
                 {
-                    _normal_buffer.copy_from(&mesh.normals[j][0], j * mesh.normals[0].size(), mesh.normals[0].size());
+                    _normal_buffer.copy_from(stream, &mesh.normals[j][0], j * mesh.normals[0].size(), mesh.normals[0].size());
                 }
                 for (unsigned int j = 0; j < mesh.num_keys; ++j)
                 {
-                    _texcoord_buffer.copy_from(&mesh.texcoords[j][0], j * mesh.texcoords[0].size(), mesh.texcoords[0].size());
+                    _texcoord_buffer.copy_from(stream, &mesh.texcoords[j][0], j * mesh.texcoords[0].size(), mesh.texcoords[0].size());
                 }
 
                 OptixBuildInput triangleInput{};
@@ -98,15 +99,15 @@ namespace rendertoy3o
 
                 // 在设备上申请临时存储空间。
                 CUdeviceptr d_temp_buffer;
-                RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_temp_buffer), gas_buffer_sizes.tempSizeInBytes));
+                RENDERTOY3O_CUDA_CHECK(cudaMallocAsync(reinterpret_cast<void **>(&d_temp_buffer), gas_buffer_sizes.tempSizeInBytes, stream.stream()));
 
                 // non-compacted output
                 // 在设备上申请输出内存空间。
                 CUdeviceptr d_buffer_temp_output_gas_and_compacted_size;
                 size_t compactedSizeOffset = roundUp<size_t>(gas_buffer_sizes.outputSizeInBytes, 8ull);
-                RENDERTOY3O_CUDA_CHECK(cudaMalloc(
+                RENDERTOY3O_CUDA_CHECK(cudaMallocAsync(
                     reinterpret_cast<void **>(&d_buffer_temp_output_gas_and_compacted_size),
-                    compactedSizeOffset + 8));
+                    compactedSizeOffset + 8, stream.stream()));
 
                 // 配置加速结构构建器以支持大小压缩。
                 OptixAccelEmitDesc emitProperty = {};
@@ -131,21 +132,21 @@ namespace rendertoy3o
                     1              // num emitted properties
                     ));
 
-                RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(d_temp_buffer)));
+                RENDERTOY3O_CUDA_CHECK(cudaFreeAsync(reinterpret_cast<void *>(d_temp_buffer), stream.stream()));
                 // RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(d_mat_indices)));
 
                 size_t compacted_gas_size;
-                RENDERTOY3O_CUDA_CHECK(cudaMemcpy(&compacted_gas_size, (void *)emitProperty.result, sizeof(size_t), cudaMemcpyDeviceToHost));
+                RENDERTOY3O_CUDA_CHECK(cudaMemcpyAsync(&compacted_gas_size, (void *)emitProperty.result, sizeof(size_t), cudaMemcpyDeviceToHost, stream.stream()));
 
                 // 这是技术手册要求的在CPU上执行的判断，因为BVH压缩过程可能在极端情况下导致结果变差。
                 if (compacted_gas_size < gas_buffer_sizes.outputSizeInBytes)
                 {
-                    RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&_gas_output_buffer), compacted_gas_size));
+                    RENDERTOY3O_CUDA_CHECK(cudaMallocAsync(reinterpret_cast<void **>(&_gas_output_buffer), compacted_gas_size, stream.stream()));
 
                     // use handle as input and output
                     RENDERTOY3O_OPTIX_CHECK(optixAccelCompact(ctx, 0, _gas_handle, _gas_output_buffer, compacted_gas_size, &_gas_handle));
 
-                    RENDERTOY3O_CUDA_CHECK(cudaFree((void *)d_buffer_temp_output_gas_and_compacted_size));
+                    RENDERTOY3O_CUDA_CHECK(cudaFreeAsync((void *)d_buffer_temp_output_gas_and_compacted_size, stream.stream()));
                 }
                 else
                 {

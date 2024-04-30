@@ -4,6 +4,7 @@
 #include "cuda_mesh.h"
 #include "cuda_texture.h"
 #include "optix_context.h"
+#include "cuda_stream.h"
 
 #include <src/shader/shader_data.h> // TODO: is it necessary?
 
@@ -22,24 +23,25 @@ namespace rendertoy3o
         CUdeviceptr _cuda_params{0u};
 
     private:
-        void create_sbt(const std::vector<Mesh> &meshes)
+        void create_sbt(const CUDAStream &stream, const std::vector<Mesh> &meshes)
         {
             CUdeviceptr d_raygen_record;
             const size_t raygen_record_size = sizeof(RayGenRecord);
-            RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_raygen_record), raygen_record_size));
+            RENDERTOY3O_CUDA_CHECK(cudaMallocAsync(reinterpret_cast<void **>(&d_raygen_record), raygen_record_size, stream.stream()));
 
             RayGenRecord rg_sbt = {};
             RENDERTOY3O_OPTIX_CHECK(optixSbtRecordPackHeader(_optix_context.raygen_prog_group(), &rg_sbt));
 
-            RENDERTOY3O_CUDA_CHECK(cudaMemcpy(
+            RENDERTOY3O_CUDA_CHECK(cudaMemcpyAsync(
                 reinterpret_cast<void *>(d_raygen_record),
                 &rg_sbt,
                 raygen_record_size,
-                cudaMemcpyHostToDevice));
+                cudaMemcpyHostToDevice, 
+                stream.stream()));
 
             CUdeviceptr d_miss_records;
             const size_t miss_record_size = sizeof(MissRecord);
-            RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_miss_records), miss_record_size * rendertoy3o::RAY_TYPE_COUNT));
+            RENDERTOY3O_CUDA_CHECK(cudaMallocAsync(reinterpret_cast<void **>(&d_miss_records), miss_record_size * rendertoy3o::RAY_TYPE_COUNT, stream.stream()));
 
             MissRecord ms_sbt[1];
             RENDERTOY3O_OPTIX_CHECK(optixSbtRecordPackHeader(_optix_context.radiance_miss_group(), &ms_sbt[0]));
@@ -53,9 +55,9 @@ namespace rendertoy3o
 
             CUdeviceptr d_hitgroup_records;
             const size_t hitgroup_record_size = sizeof(HitGroupRecord);
-            RENDERTOY3O_CUDA_CHECK(cudaMalloc(
+            RENDERTOY3O_CUDA_CHECK(cudaMallocAsync(
                 reinterpret_cast<void **>(&d_hitgroup_records),
-                hitgroup_record_size * meshes.size()));
+                hitgroup_record_size * meshes.size(), stream.stream()));
 
             std::vector<HitGroupRecord> hitGroupRecords;
             for (size_t i = 0; i < meshes.size(); ++i)
@@ -81,17 +83,19 @@ namespace rendertoy3o
                 hitGroupRecords.push_back(record);
             }
 
-            RENDERTOY3O_CUDA_CHECK(cudaMemcpy(
+            RENDERTOY3O_CUDA_CHECK(cudaMemcpyAsync(
                 reinterpret_cast<void *>(d_hitgroup_records),
                 hitGroupRecords.data(),
                 hitgroup_record_size * meshes.size(),
-                cudaMemcpyHostToDevice));
+                cudaMemcpyHostToDevice, 
+                stream.stream()));
 
             CUdeviceptr d_callable_records;
             const size_t callable_record_size = sizeof(CallableRecord);
-            RENDERTOY3O_CUDA_CHECK(cudaMalloc(
+            RENDERTOY3O_CUDA_CHECK(cudaMallocAsync(
                 reinterpret_cast<void **>(&d_callable_records),
-                callable_record_size * 1));
+                callable_record_size * 1, 
+                stream.stream()));
             std::vector<CallableRecord> callableRecords;
             for (size_t i = 0; i < 1; ++i)
             {
@@ -100,11 +104,12 @@ namespace rendertoy3o
                 callableRecords.push_back(record);
             }
 
-            RENDERTOY3O_CUDA_CHECK(cudaMemcpy(
+            RENDERTOY3O_CUDA_CHECK(cudaMemcpyAsync(
                 reinterpret_cast<void *>(d_callable_records),
                 callableRecords.data(),
                 callable_record_size * 1,
-                cudaMemcpyHostToDevice));
+                cudaMemcpyHostToDevice, 
+                stream.stream()));
 
             _sbt.raygenRecord = d_raygen_record;
             _sbt.missRecordBase = d_miss_records;
@@ -121,14 +126,14 @@ namespace rendertoy3o
     public:
         CUDAScene(const CUDAScene &) = delete;
         CUDAScene(CUDAScene &&) = delete;
-        CUDAScene(const OptixContext &optix_context, const std::vector<Mesh> &meshes, const std::vector<Texture> &textures)
+        CUDAScene(const CUDAStream &stream, const OptixContext &optix_context, const std::vector<Mesh> &meshes, const std::vector<Texture> &textures)
         : _optix_context(optix_context)
         {
-            RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&_cuda_params), sizeof(rendertoy3o::RenderSettings)));
+            RENDERTOY3O_CUDA_CHECK(cudaMallocAsync(reinterpret_cast<void **>(&_cuda_params), sizeof(rendertoy3o::RenderSettings), stream.stream()));
 
             for (const auto &mesh : meshes)
             {
-                _cuda_meshes.push_back(CUDAMesh(optix_context.ctx(), mesh));
+                _cuda_meshes.push_back(CUDAMesh(stream, optix_context.ctx(), mesh));
             }
 
             // const std::vector<std::array<float, 12>> motion_matrix =
@@ -156,7 +161,7 @@ namespace rendertoy3o
                                                              CUDATexture<uchar4>::FilterMode::Linear));
             }
 
-            create_sbt(meshes);
+            create_sbt(stream, meshes);
         }
 
         ~CUDAScene()

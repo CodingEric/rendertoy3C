@@ -14,14 +14,12 @@ OPTIX_add_sample_executable( optixPathTracer target_name
   bxdf.h
 
   cuda/cuda_accel.h
-  cuda/cuda_accel.cpp
   cuda/cuda_mesh.h
-  cuda/cuda_mesh.cpp
   cuda/cuda_buffer.h
-  cuda/cuda_buffer.cpp
   cuda/cuda_texture.h
   cuda/optix_context.h
   cuda/cuda_scene.h
+  cuda/cuda_stream.h
   
   util/sampling.h
   util/math.h

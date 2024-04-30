@@ -231,7 +231,6 @@ namespace rendertoy3o
     public:
         OptixContext()
         {
-            RENDERTOY3O_CUDA_CHECK(cudaFree(0));
             CUcontext cu_ctx = 0;
             RENDERTOY3O_OPTIX_CHECK(optixInit());
             OptixDeviceContextOptions options = {};
@@ -273,7 +272,7 @@ namespace rendertoy3o
 
     public:
         [[nodiscard]] const auto create_scene(const std::vector<Mesh> &meshes, const std::vector<Texture> &textures) const {
-            return CUDAScene(*this, std::forward<const std::vector<Mesh> &>(meshes), std::forward<const std::vector<Texture> &>(textures));
+            // return CUDAScene(*this, std::forward<const std::vector<Mesh> &>(meshes), std::forward<const std::vector<Texture> &>(textures));
         }
     };
 }

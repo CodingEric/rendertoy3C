@@ -8,6 +8,8 @@
 
 #include <iostream>
 
+#include "cuda_stream.h"
+
 namespace rendertoy3o
 {
     template <typename BufferType>
@@ -24,9 +26,9 @@ namespace rendertoy3o
         {
             other._buffer_ptr = 0u;
         }
-        CUDABuffer(size_t buffer_size) : _buffer_size_in_bytes{buffer_size * sizeof(BufferType)}
+        CUDABuffer(const CUDAStream &stream, size_t buffer_size) : _buffer_size_in_bytes{buffer_size * sizeof(BufferType)}
         {
-            RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&_buffer_ptr), _buffer_size_in_bytes));
+            RENDERTOY3O_CUDA_CHECK(cudaMallocAsync(reinterpret_cast<void **>(&_buffer_ptr), _buffer_size_in_bytes, stream.stream()));
         }
         ~CUDABuffer()
         {
@@ -38,14 +40,14 @@ namespace rendertoy3o
         [[nodiscard]] const auto &buffer_ptr() const noexcept { return _buffer_ptr; }
 
     public:
-        void copy_from(const void *data)
+        void copy_from(const CUDAStream &stream, const void *data)
         {
-            RENDERTOY3O_CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(_buffer_ptr), data, _buffer_size_in_bytes, cudaMemcpyHostToDevice));
+            RENDERTOY3O_CUDA_CHECK(cudaMemcpyAsync(reinterpret_cast<void *>(_buffer_ptr), data, _buffer_size_in_bytes, cudaMemcpyHostToDevice, stream.stream()));
         }
 
-        void copy_from(const void *data, const size_t offset, const size_t size)
+        void copy_from(const CUDAStream &stream, const void *data, const size_t offset, const size_t size)
         {
-            RENDERTOY3O_CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(_buffer_ptr + offset * sizeof(BufferType)), data, size * sizeof(BufferType), cudaMemcpyHostToDevice));
+            RENDERTOY3O_CUDA_CHECK(cudaMemcpyAsync(reinterpret_cast<void *>(_buffer_ptr + offset * sizeof(BufferType)), data, size * sizeof(BufferType), cudaMemcpyHostToDevice, stream.stream()));
         }
     };
 }

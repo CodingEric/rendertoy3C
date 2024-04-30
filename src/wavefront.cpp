@@ -32,6 +32,7 @@
 #include "cuda/cuda_accel.h"
 #include "cuda/optix_context.h"
 #include "cuda/cuda_scene.h"
+#include "cuda/cuda_stream.h"
 
 #include <array>
 #include <cstring>
@@ -55,12 +56,6 @@ int32_t mouse_button = -1;
 int32_t samples_per_launch = 8;
 
 using namespace rendertoy3o;
-
-struct PathTracerState
-{
-    CUstream stream = 0;
-    rendertoy3o::RenderSettings params;
-};
 
 //------------------------------------------------------------------------------
 //
@@ -150,18 +145,16 @@ static void scrollCallback(GLFWwindow *window, double xscroll, double yscroll)
 //
 //------------------------------------------------------------------------------
 
-void initLaunchParams(PathTracerState &state, const CUDAAccel &accel)
+void initLaunchParams(RenderSettings &params, const CUDAAccel &accel)
 {
     RENDERTOY3O_CUDA_CHECK(cudaMalloc(
-        reinterpret_cast<void **>(&state.params.film_settings.accum_buffer),
-        state.params.film_settings.width * state.params.film_settings.height * sizeof(float4)));
-    state.params.film_settings.frame_buffer = nullptr; // Will be set when output buffer is mapped
+        reinterpret_cast<void **>(&params.film_settings.accum_buffer),
+        params.film_settings.width * params.film_settings.height * sizeof(float4)));
+    params.film_settings.frame_buffer = nullptr; // Will be set when output buffer is mapped
 
-    state.params.film_settings.samples_per_launch = samples_per_launch;
-    state.params.film_settings.subframe_index = 0u;
-    state.params.handle = accel.ias_handle();
-
-    
+    params.film_settings.samples_per_launch = samples_per_launch;
+    params.film_settings.subframe_index = 0u;
+    params.handle = accel.ias_handle();
 }
 
 void handleCameraUpdate(rendertoy3o::RenderSettings &params)
@@ -200,21 +193,21 @@ void updateState(sutil::CUDAOutputBuffer<uchar4> &output_buffer, rendertoy3o::Re
     handleResize(output_buffer, params);
 }
 
-void launchSubframe(sutil::CUDAOutputBuffer<uchar4> &output_buffer, PathTracerState &state, const OptixContext &ctx, const CUDAScene &scene)
+void launchSubframe(const CUDAStream &stream, sutil::CUDAOutputBuffer<uchar4> &output_buffer, RenderSettings &params, const OptixContext &ctx, const CUDAScene &scene)
 {
     // Launch
     uchar4 *result_buffer_data = output_buffer.map();
-    state.params.film_settings.frame_buffer = result_buffer_data;
-    scene.update_cuda_params_async(state.params, state.stream);
+    params.film_settings.frame_buffer = result_buffer_data;
+    scene.update_cuda_params_async(params, stream.stream());
 
     RENDERTOY3O_OPTIX_CHECK(optixLaunch(
-        ctx.pipeline(),
-        state.stream,
+        ctx.pipeline(), 
+        stream.stream(),
         scene.params(),
         sizeof(rendertoy3o::RenderSettings),
         &scene.sbt(),
-        state.params.film_settings.width,  // launch width
-        state.params.film_settings.height, // launch height
+        params.film_settings.width,  // launch width
+        params.film_settings.height, // launch height
         1                    // launch depth
         ));
     output_buffer.unmap();
@@ -254,7 +247,7 @@ void initCameraState()
 
 /// @brief 创建光源采样表
 /// @param state
-void buildLightSampler(PathTracerState &state)
+void buildLightSampler(RenderSettings &params)
 {
     std::vector<rendertoy3o::Light> lights = {};
     for (const auto &mesh : g_meshes)
@@ -269,14 +262,14 @@ void buildLightSampler(PathTracerState &state)
             lights.push_back(light);
         }
     }
-    state.params.light_settings.light_count = lights.size();
-    RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&state.params.light_settings.lights), lights.size() * sizeof(rendertoy3o::Light)));
-    RENDERTOY3O_CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(state.params.light_settings.lights), lights.data(), lights.size() * sizeof(rendertoy3o::Light), cudaMemcpyHostToDevice));
+    params.light_settings.light_count = lights.size();
+    RENDERTOY3O_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&params.light_settings.lights), lights.size() * sizeof(rendertoy3o::Light)));
+    RENDERTOY3O_CUDA_CHECK(cudaMemcpy(reinterpret_cast<void *>(params.light_settings.lights), lights.data(), lights.size() * sizeof(rendertoy3o::Light), cudaMemcpyHostToDevice));
 }
 
-void cleanupState(PathTracerState &state)
+void cleanupState(RenderSettings &params)
 {
-    RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(state.params.film_settings.accum_buffer)));
+    RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(params.film_settings.accum_buffer)));
 }
 
 //------------------------------------------------------------------------------
@@ -291,33 +284,24 @@ int main(int argc, char *argv[])
     // std::tie(g_meshes, g_textures) = rendertoy3o::loadOBJ({"/home/tianyu/mat_test.obj"});
     std::tie(g_meshes, g_textures) = rendertoy3o::loadOBJ({"E:\\test.obj"});
     // std::tie(g_meshes, g_textures) = wavefront::loadOBJ({"/run/media/tianyu/hdd0-3d-wksp/testmodels/motion.obj"/*, "/run/media/tianyu/hdd0-3d-wksp/testmodels/motion0002.obj"*/});
-
+    CUDAStream stream;
     OptixContext optix_context;
-    CUDAScene cuda_scene(optix_context, g_meshes, g_textures);
-    // 总体状态机
-    PathTracerState state{
-        .stream = 0u,
-        .params = RenderSettings(768, 768, samples_per_launch, cuda_scene.accel().ias_handle())
-    };
-    RENDERTOY3O_CUDA_CHECK(cudaStreamCreate(&state.stream));
+    CUDAScene cuda_scene(stream, optix_context, g_meshes, g_textures);
+    auto params = RenderSettings(768, 768, samples_per_launch, cuda_scene.accel().ias_handle());
     sutil::CUDAOutputBufferType output_buffer_type = sutil::CUDAOutputBufferType::GL_INTEROP;
 
     // 初始化摄像机参数，包括互动场景摄像机
     initCameraState();
+    buildLightSampler(params);
 
-    // 创建光源列表
-    buildLightSampler(state);
-
-    // initLaunchParams(state, cuda_scene.accel());
-
-    GLFWwindow *window = sutil::initUI("rendertoy3c", state.params.film_settings.width, state.params.film_settings.height);
+    GLFWwindow *window = sutil::initUI("rendertoy3c", params.film_settings.width, params.film_settings.height);
     glfwSetMouseButtonCallback(window, mouseButtonCallback);
     glfwSetCursorPosCallback(window, cursorPosCallback);
     glfwSetWindowSizeCallback(window, windowSizeCallback);
     glfwSetWindowIconifyCallback(window, windowIconifyCallback);
     glfwSetKeyCallback(window, keyCallback);
     glfwSetScrollCallback(window, scrollCallback);
-    glfwSetWindowUserPointer(window, &state.params);
+    glfwSetWindowUserPointer(window, &params);
 
     //
     // Render loop
@@ -325,10 +309,10 @@ int main(int argc, char *argv[])
     {
         sutil::CUDAOutputBuffer<uchar4> output_buffer(
             output_buffer_type,
-            state.params.film_settings.width,
-            state.params.film_settings.height);
+            params.film_settings.width,
+            params.film_settings.height);
 
-        output_buffer.setStream(state.stream);
+        output_buffer.setStream(stream.stream());
         rendertoy3o::GLDisplay gl_display;
 
         std::chrono::duration<double> state_update_time(0.0);
@@ -340,12 +324,12 @@ int main(int argc, char *argv[])
             auto t0 = std::chrono::steady_clock::now();
             glfwPollEvents();
 
-            updateState(output_buffer, state.params);
+            updateState(output_buffer, params);
             auto t1 = std::chrono::steady_clock::now();
             state_update_time += t1 - t0;
             t0 = t1;
 
-            launchSubframe(output_buffer, state, optix_context, cuda_scene);
+            launchSubframe(stream, output_buffer, params, optix_context, cuda_scene);
             t1 = std::chrono::steady_clock::now();
             render_time += t1 - t0;
             t0 = t1;
@@ -358,14 +342,14 @@ int main(int argc, char *argv[])
 
             glfwSwapBuffers(window);
 
-            ++state.params.film_settings.subframe_index;
+            ++params.film_settings.subframe_index;
         } while (!glfwWindowShouldClose(window));
         CUDA_SYNC_CHECK();
     }
 
     sutil::cleanupUI(window);
-
-    cleanupState(state);
+    
+    cleanupState(params);
 
     return 0;
 }
