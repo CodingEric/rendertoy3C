@@ -23,3 +23,7 @@
 #endif // __NVCC__
 
 using Spectrum = float3;
+
+// Forward declarations
+struct Mesh;
+struct Texture;

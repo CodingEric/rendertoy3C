@@ -97,7 +97,7 @@ namespace rendertoy3o
         OptixTraversableHandle handle;
 
 #ifndef __NVCC__
-        RenderSettings(int width, int height, uint samples_per_launch, OptixTraversableHandle handle)
+        RenderSettings(int width, int height, uint samples_per_launch, OptixTraversableHandle handle) noexcept
         {
             film_settings.width = width;
             film_settings.height = height;
@@ -109,6 +109,11 @@ namespace rendertoy3o
             film_settings.samples_per_launch = samples_per_launch;
             film_settings.subframe_index = 0u;
             this->handle = handle;
+        }
+
+        ~RenderSettings() noexcept
+        {
+            RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(film_settings.accum_buffer)));
         }
 #endif // __NVCC__
     };

@@ -23,7 +23,7 @@ namespace rendertoy3o
         CUdeviceptr _cuda_params{0u};
 
     private:
-        void create_sbt(const CUDAStream &stream, const std::vector<Mesh> &meshes)
+        void create_sbt(const CUDAStream &stream, const std::vector<Mesh> &meshes) noexcept
         {
             CUdeviceptr d_raygen_record;
             const size_t raygen_record_size = sizeof(RayGenRecord);
@@ -126,7 +126,7 @@ namespace rendertoy3o
     public:
         CUDAScene(const CUDAScene &) = delete;
         CUDAScene(CUDAScene &&) = delete;
-        CUDAScene(const CUDAStream &stream, const OptixContext &optix_context, const std::vector<Mesh> &meshes, const std::vector<Texture> &textures)
+        CUDAScene(const CUDAStream &stream, const OptixContext &optix_context, const std::vector<Mesh> &meshes, const std::vector<Texture> &textures) noexcept
         : _optix_context(optix_context)
         {
             RENDERTOY3O_CUDA_CHECK(cudaMallocAsync(reinterpret_cast<void **>(&_cuda_params), sizeof(rendertoy3o::RenderSettings), stream.stream()));
@@ -164,7 +164,7 @@ namespace rendertoy3o
             create_sbt(stream, meshes);
         }
 
-        ~CUDAScene()
+        ~CUDAScene() noexcept
         {
             RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(_sbt.raygenRecord)));
             RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(_sbt.missRecordBase)));
@@ -175,7 +175,7 @@ namespace rendertoy3o
         }
 
     public:
-        void update_cuda_params_async(const RenderSettings &params, const cudaStream_t stream) const
+        void update_cuda_params_async(const RenderSettings &params, const cudaStream_t stream) const noexcept
         {
             RENDERTOY3O_CUDA_CHECK(cudaMemcpyAsync(
                 reinterpret_cast<void *>(_cuda_params),

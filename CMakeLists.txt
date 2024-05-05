@@ -80,7 +80,7 @@
 # This enforces a particular version of CMake that we require to process the script files
 # properly.  We rely on VERSION_GREATER_EQUAL which requires CMake v. 3.7.
 cmake_minimum_required(VERSION 3.7 FATAL_ERROR)
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -91,7 +91,7 @@ project(OptiX-Samples)
 # As of CMake 2.6 policies were introduced in order to provide a mechanism for
 # adding backwards compatibility one feature at a time.  We will just specify
 # that all policies will use version 2.8.12 semantics.
-cmake_policy(VERSION 2.8.12)
+cmake_policy(VERSION 3.5)
 
 if( POLICY CMP0072 )
   # FindOpenGL prefers GLVND by default when available

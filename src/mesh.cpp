@@ -34,7 +34,7 @@ struct Compare
     }
 };
 
-std::tuple<std::vector<rendertoy3o::Mesh>, std::vector<rendertoy3o::Texture>> rendertoy3o::loadOBJ(const std::vector<std::string> &paths)
+[[nodiscard]] std::tuple<std::vector<rendertoy3o::Mesh>, std::vector<rendertoy3o::Texture>> rendertoy3o::loadOBJ(const std::vector<std::string> &paths)
 {
     const auto key_frames = paths.size();
     std::vector<tinyobj::ObjReader> readers;
@@ -43,14 +43,14 @@ std::tuple<std::vector<rendertoy3o::Mesh>, std::vector<rendertoy3o::Texture>> re
     {
         auto &reader = readers[i];
         auto &path = paths[i];
-        if (!reader.ParseFromFile(path))
+        if (!reader.ParseFromFile(path)) [[unlikely]]
         {
-            if (!reader.Error().empty())
+            if (!reader.Error().empty()) [[likely]]
                 std::cerr << "TinyObjReader: " << reader.Error();
             exit(1);
         }
 
-        if (!reader.Warning().empty())
+        if (!reader.Warning().empty()) [[unlikely]]
             std::cout << "TinyObjReader: " << reader.Warning();
     }
 

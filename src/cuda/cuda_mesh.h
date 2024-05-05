@@ -31,7 +31,7 @@ namespace rendertoy3o
             other._gas_handle = 0u;
             other._gas_output_buffer = 0u;
         }
-        CUDAMesh(const CUDAStream &stream, OptixDeviceContext ctx, const Mesh &mesh) : _vertex_buffer{CUDABuffer<float3>(stream, mesh.vertices[0].size())}, // TODO: more explicit representation
+        CUDAMesh(const CUDAStream &stream, OptixDeviceContext ctx, const Mesh &mesh) noexcept : _vertex_buffer{CUDABuffer<float3>(stream, mesh.vertices[0].size())}, // TODO: more explicit representation
                                                                                        _index_buffer{CUDABuffer<int3>(stream, mesh.indices.size())},
                                                                                        _normal_buffer{CUDABuffer<float3>(stream, mesh.normals[0].size())},
                                                                                        _texcoord_buffer{CUDABuffer<float2>(stream, mesh.texcoords[0].size())},
@@ -154,7 +154,7 @@ namespace rendertoy3o
                 }
             }
         }
-        ~CUDAMesh()
+        ~CUDAMesh() noexcept
         {
             if (_gas_output_buffer)
             {
@@ -163,23 +163,23 @@ namespace rendertoy3o
         }
 
     public:
-        [[nodiscard]] const auto &gas_handle() const
+        [[nodiscard]] const auto &gas_handle() const noexcept
         {
             return _gas_handle;
         }
-        [[nodiscard]] const auto &vertex_buffer() const
+        [[nodiscard]] const auto &vertex_buffer() const noexcept
         {
             return _vertex_buffer;
         }
-        [[nodiscard]] const auto &index_buffer() const
+        [[nodiscard]] const auto &index_buffer() const noexcept
         {
             return _index_buffer;
         }
-        [[nodiscard]] const auto &normal_buffer() const
+        [[nodiscard]] const auto &normal_buffer() const noexcept
         {
             return _normal_buffer;
         }
-        [[nodiscard]] const auto &texcoord_buffer() const
+        [[nodiscard]] const auto &texcoord_buffer() const noexcept
         {
             return _texcoord_buffer;
         }

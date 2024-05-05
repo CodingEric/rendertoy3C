@@ -26,7 +26,7 @@ namespace rendertoy3o
         CUDAAccel() = default;
         CUDAAccel(const CUDAAccel &) = delete;
         CUDAAccel(const CUDAAccel &&) = delete;
-        ~CUDAAccel()
+        ~CUDAAccel() noexcept
         {
             RENDERTOY3O_CUDA_CHECK(cudaFree(reinterpret_cast<void *>(_ias_output_buffer)));
             for (const auto &motion_transform : _motion_transforms)
@@ -35,7 +35,7 @@ namespace rendertoy3o
             }
         }
 
-        void append_animated_instance(const OptixDeviceContext ctx, const CUDAMesh &mesh, const std::vector<std::array<float, 12>> &motion_matrix, const OptixMotionOptions &motion_options, float static_transformation[12])
+        void append_animated_instance(const OptixDeviceContext ctx, const CUDAMesh &mesh, const std::vector<std::array<float, 12>> &motion_matrix, const OptixMotionOptions &motion_options, float static_transformation[12]) noexcept
         {
 
             OptixMatrixMotionTransform motion_transform{.child = mesh.gas_handle(),
@@ -72,7 +72,7 @@ namespace rendertoy3o
             append_instance(temp_animated_gas_handle, static_transformation);
         }
 
-        void append_instance(const OptixTraversableHandle handle, float transformation[12])
+        void append_instance(const OptixTraversableHandle handle, float transformation[12]) noexcept
         {
             OptixInstance optix_instance{
                 .instanceId = static_cast<uint>(instance_size()),
@@ -84,12 +84,12 @@ namespace rendertoy3o
             _optix_instances.push_back(optix_instance);
         }
 
-        void append_instance(const CUDAMesh &mesh, float transformation[12])
+        void append_instance(const CUDAMesh &mesh, float transformation[12]) noexcept
         {
             append_instance(mesh.gas_handle(), transformation);
         }
 
-        void build(const OptixDeviceContext ctx)
+        void build(const OptixDeviceContext ctx) noexcept
         {
             CUdeviceptr d_instances;
             const size_t instance_size_in_bytes = sizeof(OptixInstance);
@@ -150,12 +150,12 @@ namespace rendertoy3o
         }
 
     public:
-        [[nodiscard]] const size_t instance_size() const
+        [[nodiscard]] const size_t instance_size() const noexcept
         {
             return _optix_instances.size();
         }
 
-        [[nodiscard]] const auto &ias_handle() const
+        [[nodiscard]] const auto &ias_handle() const noexcept
         {
             return _ias_handle;
         }

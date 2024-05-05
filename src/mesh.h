@@ -23,7 +23,7 @@ struct Mesh
 
 struct Texture
 {
-    std::vector<uint32_t> pixel = {};
+    std::vector<uint32_t> pixel{};
     int2 resolution { -1, -1 };
 };
 

@@ -13,17 +13,17 @@ namespace rendertoy3o
         CUstream _stream{};
 
     public:
-        CUDAStream()
+        CUDAStream() noexcept
         {
             RENDERTOY3O_CUDA_CHECK(cudaStreamCreate(&_stream));
         }
 
-        void sync()
+        void sync() noexcept
         {
             RENDERTOY3O_CUDA_CHECK(cudaStreamSynchronize(_stream));
         }
 
-        ~CUDAStream()
+        ~CUDAStream() noexcept
         {
             RENDERTOY3O_CUDA_CHECK(cudaStreamDestroy(_stream));
         }

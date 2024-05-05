@@ -35,7 +35,7 @@ namespace rendertoy3o
 
     public:
         CUDATexture(const CUDATexture &) = delete;
-        CUDATexture(CUDATexture &&other) : _texture_array{other._texture_array},
+        CUDATexture(CUDATexture &&other) noexcept : _texture_array{other._texture_array},
                                            _texture_object{other._texture_object},
                                            _width{other._width},
                                            _height{other._height}
@@ -47,7 +47,7 @@ namespace rendertoy3o
                     size_t height,
                     const void *data,
                     const AddressMode address_mode,
-                    const FilterMode filter_mode) : _width{width}, _height{height}
+                    const FilterMode filter_mode) noexcept : _width{width}, _height{height}
         {
             cudaChannelFormatDesc channel_desc = cudaCreateChannelDesc<BufferType>();
             RENDERTOY3O_CUDA_CHECK(cudaMallocArray(&_texture_array, &channel_desc, width, height));
@@ -74,7 +74,7 @@ namespace rendertoy3o
             RENDERTOY3O_CUDA_CHECK(cudaCreateTextureObject(&_texture_object, &res_desc, &tex_desc, nullptr));
         }
 
-        ~CUDATexture()
+        ~CUDATexture() noexcept
         {
             if (_texture_object)
                 RENDERTOY3O_CUDA_CHECK(cudaDestroyTextureObject(_texture_object));
@@ -83,7 +83,7 @@ namespace rendertoy3o
         }
 
     public:
-        const auto texture_object() const
+        const auto texture_object() const noexcept
         {
             return _texture_object;
         }

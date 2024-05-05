@@ -21,7 +21,7 @@ struct Light
     float m_area;
 
     RENDERTOY_CPU_GPU
-    Light(float3 emission, float3 v0, float3 v1, float3 v2, LightType lightType = LightType::SurfaceLight)
+    Light(float3 emission, float3 v0, float3 v1, float3 v2, LightType lightType = LightType::SurfaceLight) noexcept
         : m_lightType(lightType), m_emission(emission), m_v0(v0), m_v1(v1), m_v2(v2)
     {
         m_normal = cross(m_v1 - m_v0, m_v2 - m_v0);
@@ -30,7 +30,7 @@ struct Light
     }
 
     RENDERTOY_GPU
-    void Sample(const float3 &P, unsigned int &seed, float3 &light_pos, float3 &emission, float &pdf)
+    void Sample(const float3 &P, unsigned int &seed, float3 &light_pos, float3 &emission, float &pdf) noexcept
     {
         const float u = rnd(seed);
         const float v = rnd(seed);

@@ -33,12 +33,12 @@ namespace rendertoy3o
         OptixPipeline _pipeline = 0;
 
     private:
-        static void context_log_cb(unsigned int level, const char *tag, const char *message, void * /*cbdata */)
+        static void context_log_cb(unsigned int level, const char *tag, const char *message, void * /*cbdata */) noexcept
         {
             std::cerr << "[" << std::setw(2) << level << "][" << std::setw(12) << tag << "]: " << message << "\n";
         }
 
-        void create_module()
+        void create_module() noexcept
         {
             OptixPayloadType payloadType = {};
             // radiance prd
@@ -110,7 +110,7 @@ namespace rendertoy3o
                 &_ptx_test));
         }
 
-        void create_program_groups()
+        void create_program_groups() noexcept
         {
             OptixProgramGroupOptions program_group_options = {};
 
@@ -170,8 +170,8 @@ namespace rendertoy3o
                     &_callable_test_group));
             }
         }
-
-        void create_pipeline()
+ 
+        void create_pipeline() noexcept
         {
             // Optix程序组
             OptixProgramGroup program_groups[] =
@@ -229,7 +229,7 @@ namespace rendertoy3o
         }
 
     public:
-        OptixContext()
+        OptixContext() noexcept
         {
             CUcontext cu_ctx = 0;
             RENDERTOY3O_OPTIX_CHECK(optixInit());
@@ -248,7 +248,7 @@ namespace rendertoy3o
         }
         OptixContext(const OptixContext &) = delete;
         OptixContext(const OptixContext &&) = delete;
-        ~OptixContext()
+        ~OptixContext() noexcept
         {
             RENDERTOY3O_OPTIX_CHECK(optixPipelineDestroy(_pipeline));
             RENDERTOY3O_OPTIX_CHECK(optixProgramGroupDestroy(_raygen_prog_group));
