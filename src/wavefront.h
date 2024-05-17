@@ -22,8 +22,12 @@
 #define RENDERTOY_CPU_GPU_INLINE inline
 #endif // __NVCC__
 
-using Spectrum = float3;
+namespace rendertoy3o
+{
 
-// Forward declarations
-struct Mesh;
-struct Texture;
+    using Spectrum = float3;
+
+    // Forward declarations
+    struct Mesh;
+    struct Texture;
+}

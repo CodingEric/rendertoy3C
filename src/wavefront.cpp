@@ -195,7 +195,18 @@ int main(int argc, char *argv[])
 
     std::vector<rendertoy3o::Mesh> host_meshes;
     std::vector<rendertoy3o::Texture> host_textures;
-    std::tie(host_meshes, host_textures) = rendertoy3o::loadOBJ({"E:\\test.obj"});
+
+    std::cout << "Enter animation frames: "<< std::endl;
+    int frames = 0;
+    std::cin >> frames;
+    std::vector<std::string> paths;
+    std::string tmp;
+    for(int i = 0; i < frames; ++i)
+    {
+        std::cin>>tmp;
+        paths.push_back(tmp);
+    }
+    std::tie(host_meshes, host_textures) = rendertoy3o::loadOBJ(paths);
     CUDAStream stream;
     OptixContext optix_context;
     CUDAScene cuda_scene(stream, optix_context, host_meshes, host_textures);

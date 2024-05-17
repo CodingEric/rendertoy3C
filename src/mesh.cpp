@@ -169,7 +169,11 @@ struct Compare
                 return textureID;
             };
 
+            #ifdef _WIN32
+            const std::string modelDir = paths[0].substr(0, paths[0].rfind('\\') + 1);
+            #else
             const std::string modelDir = paths[0].substr(0, paths[0].rfind('/') + 1);
+            #endif
 
             for (size_t faceID = 0; faceID < shape.mesh.material_ids.size(); ++faceID)
             {
